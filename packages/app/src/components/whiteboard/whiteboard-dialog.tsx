@@ -155,6 +155,7 @@ export default function WhiteboardDialog(props: {
           chatRevisionApplied: "AI 已生成新的可编辑白板版本，原版本保持不变。",
           chatLiveStarted: "AI 正在实时搭建新版本，原白板保持不变。",
           chatCurrentApplied: "AI 方案已替换当前白板，可使用撤销恢复。",
+          chatVersionDiscarded: "AI 版本已丢弃，已返回来源白板。",
           playtest: "流程试玩",
           playtestEmpty: "至少需要一个矩形、菱形或椭圆节点才能开始流程试玩。",
           scenarioSaved: "已保存为 Demo 预览试玩场景。",
@@ -224,6 +225,7 @@ export default function WhiteboardDialog(props: {
           chatRevisionApplied: "AI created a new editable board revision. The previous version is unchanged.",
           chatLiveStarted: "AI is building a live revision. The previous board remains unchanged.",
           chatCurrentApplied: "AI replaced the current board. Use Undo to restore it.",
+          chatVersionDiscarded: "AI revision discarded. Returned to its source board.",
           playtest: "Flow playtest",
           playtestEmpty: "Add at least one rectangle, diamond, or ellipse node before starting a flow playtest.",
           scenarioSaved: "Saved as a Demo Preview playtest scenario.",
@@ -448,6 +450,7 @@ export default function WhiteboardDialog(props: {
       setState("error", copy().boardLimit)
       return false
     }
+    const sourceBoardID = state.workspace.active
     const decorations = handle.snapshotDecorations()
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
@@ -457,6 +460,7 @@ export default function WhiteboardDialog(props: {
       renameWhiteboardBoard(added, added.active, name),
       added.active,
       message.id,
+      sourceBoardID,
     )
     populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied, decorations)
     return true
@@ -508,6 +512,7 @@ export default function WhiteboardDialog(props: {
       })
       return false
     }
+    const sourceBoardID = state.workspace.active
     const decorations = handle.snapshotDecorations()
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
@@ -518,6 +523,7 @@ export default function WhiteboardDialog(props: {
       renameWhiteboardBoard(added, added.active, name),
       added.active,
       message.id,
+      sourceBoardID,
     )
     setState({
       chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
@@ -595,6 +601,28 @@ export default function WhiteboardDialog(props: {
     state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
     saveWorkspace(workspace)
     setState({ playtest: undefined, playtestPath: [] })
+  }
+
+  const discardChatVersion = (message: WhiteboardChatMessage) => {
+    const version = chatVersions()[message.id]
+    if (!version?.sourceBoardID || state.workspace.boards.length <= 1) return false
+    if (!state.workspace.boards.some((board) => board.id === version.sourceBoardID)) return false
+
+    const wasActive = state.workspace.active === version.boardID
+    let workspace = removeWhiteboardBoard(state.workspace, version.boardID)
+    if (wasActive) workspace = activateWhiteboardBoard(workspace, version.sourceBoardID)
+    if (workspace === state.workspace) return false
+    if (workspace.active !== state.workspace.active) {
+      state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
+    }
+    removeWhiteboardScene(props.storageKey, version.boardID)
+    saveWorkspace(workspace)
+    if (state.chatLiveBoard === version.boardID) {
+      setState({ chatLiveMessage: "", chatLiveBoard: "", chatLiveSignature: "" })
+    }
+    setState({ playtest: undefined, playtestPath: [] })
+    showNotice(copy().chatVersionDiscarded)
+    return true
   }
 
   const addBoard = () => {
@@ -1203,6 +1231,7 @@ export default function WhiteboardDialog(props: {
             onApply={applyChatProposal}
             onRepair={props.onChatSend ? repairChatProposal : undefined}
             onBuild={props.onBuild ? buildChatProposal : undefined}
+            onDiscard={discardChatVersion}
             onOpenVersion={switchBoard}
             onClose={() => setState("chatOpen", false)}
           />

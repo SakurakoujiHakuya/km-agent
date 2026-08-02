@@ -6,11 +6,13 @@ export type WhiteboardBoard = {
   id: string
   name: string
   chatMessageIDs?: string[]
+  sourceBoardID?: string
 }
 
 export type WhiteboardChatVersion = {
   boardID: string
   boardName: string
+  sourceBoardID?: string
 }
 
 export type WhiteboardWorkspace = {
@@ -60,16 +62,27 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
             id: board.id,
             name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board"),
             ...(chatMessageIDs.length > 0 ? { chatMessageIDs } : {}),
+            ...(typeof board.sourceBoardID === "string" && boardId.test(board.sourceBoardID)
+              ? { sourceBoardID: board.sourceBoardID }
+              : {}),
           },
         ]
       })
       .slice(0, WHITEBOARD_BOARD_MAX_COUNT)
     if (boards.length === 0) return fallback
+    const ids = new Set(boards.map((board) => board.id))
+    const linked = boards.map((board) => {
+      if (!board.sourceBoardID || board.sourceBoardID === board.id || !ids.has(board.sourceBoardID)) {
+        const { sourceBoardID: _, ...rest } = board
+        return rest
+      }
+      return board
+    })
     const active =
-      typeof fields.active === "string" && boards.some((board) => board.id === fields.active)
+      typeof fields.active === "string" && linked.some((board) => board.id === fields.active)
         ? fields.active
-        : boards[0].id
-    return { version: 1, active, boards }
+        : linked[0].id
+    return { version: 1, active, boards: linked }
   } catch {
     return fallback
   }
@@ -99,10 +112,19 @@ export function renameWhiteboardBoard(workspace: WhiteboardWorkspace, id: string
   return { ...workspace, boards: workspace.boards.map((board) => (board.id === id ? { ...board, name: next } : board)) }
 }
 
-export function linkWhiteboardChatMessage(workspace: WhiteboardWorkspace, id: string, messageID: string) {
+export function linkWhiteboardChatMessage(
+  workspace: WhiteboardWorkspace,
+  id: string,
+  messageID: string,
+  sourceBoardID?: string,
+) {
   if (!workspace.boards.some((board) => board.id === id) || !whiteboardChatMessageID(messageID)) return workspace
+  const source =
+    sourceBoardID && sourceBoardID !== id && workspace.boards.some((board) => board.id === sourceBoardID)
+      ? sourceBoardID
+      : undefined
   const current = whiteboardChatVersions(workspace)[messageID]
-  if (current?.boardID === id) return workspace
+  if (current?.boardID === id && (!source || current.sourceBoardID === source)) return workspace
   return {
     ...workspace,
     boards: workspace.boards.map((board) => {
@@ -110,7 +132,8 @@ export function linkWhiteboardChatMessage(workspace: WhiteboardWorkspace, id: st
       if (board.id === id) messages.push(messageID)
       const next = messages.slice(-WHITEBOARD_BOARD_CHAT_MESSAGE_MAX_COUNT)
       const { chatMessageIDs: _, ...rest } = board
-      return next.length > 0 ? { ...rest, chatMessageIDs: next } : rest
+      const linked = source && board.id === id ? { ...rest, sourceBoardID: source } : rest
+      return next.length > 0 ? { ...linked, chatMessageIDs: next } : linked
     }),
   }
 }
@@ -119,17 +142,33 @@ export function whiteboardChatVersions(workspace: WhiteboardWorkspace) {
   const versions: Record<string, WhiteboardChatVersion> = {}
   workspace.boards.forEach((board) =>
     board.chatMessageIDs?.forEach((messageID) => {
-      versions[messageID] = { boardID: board.id, boardName: board.name }
+      versions[messageID] = {
+        boardID: board.id,
+        boardName: board.name,
+        ...(board.sourceBoardID ? { sourceBoardID: board.sourceBoardID } : {}),
+      }
     }),
   )
   return versions
 }
 
-export function removeWhiteboardBoard(workspace: WhiteboardWorkspace, id: string) {
+export function removeWhiteboardBoard(workspace: WhiteboardWorkspace, id: string): WhiteboardWorkspace {
   if (workspace.boards.length <= 1) return workspace
   const index = workspace.boards.findIndex((board) => board.id === id)
   if (index === -1) return workspace
-  const boards = workspace.boards.filter((board) => board.id !== id)
+  const removed = workspace.boards[index]
+  const inheritedSource = removed?.sourceBoardID
+  const boards = workspace.boards
+    .filter((board) => board.id !== id)
+    .map((board) => {
+      if (board.sourceBoardID !== id) return board
+      const { sourceBoardID: _, ...rest } = board
+      return inheritedSource &&
+        inheritedSource !== board.id &&
+        workspace.boards.some((item) => item.id === inheritedSource)
+        ? { ...rest, sourceBoardID: inheritedSource }
+        : rest
+    })
   const active =
     workspace.active === id ? (boards[Math.min(index, boards.length - 1)]?.id ?? boards[0].id) : workspace.active
   return { ...workspace, active, boards }

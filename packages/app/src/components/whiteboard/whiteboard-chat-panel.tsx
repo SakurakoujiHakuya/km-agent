@@ -1,6 +1,6 @@
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
-import { createEffect, createMemo, For, Show } from "solid-js"
+import { createEffect, createMemo, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
@@ -40,6 +40,7 @@ export function WhiteboardChatPanel(props: {
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
   onRepair?: (message: WhiteboardChatMessage, request: string) => Promise<boolean | void> | boolean | void
   onBuild?: (message: WhiteboardChatMessage) => Promise<boolean | void> | boolean | void
+  onDiscard?: (message: WhiteboardChatMessage) => Promise<boolean | void> | boolean | void
   onOpenVersion?: (boardID: string) => void
   onClose: () => void
 }) {
@@ -47,6 +48,7 @@ export function WhiteboardChatPanel(props: {
     input: "",
     scope: "all" as WhiteboardSceneScope,
     stopping: false,
+    confirmDiscard: "",
   })
   const copy = createMemo(() =>
     props.chinese
@@ -79,6 +81,8 @@ export function WhiteboardChatPanel(props: {
           proposal: "可编辑方案",
           buildDemo: "制作 Demo",
           buildHint: "保存为安全版本，并携带白板结构与项目技术栈立即启动 Build 任务",
+          discard: "丢弃版本",
+          confirmDiscard: "确认丢弃",
           hints: ["补全流程", "增加失败反馈", "检查软锁", "优化新手引导"],
         }
       : {
@@ -111,6 +115,8 @@ export function WhiteboardChatPanel(props: {
           proposal: "Editable proposal",
           buildDemo: "Build demo",
           buildHint: "Save a safe version and start a Build task with the board structure and project stack",
+          discard: "Discard version",
+          confirmDiscard: "Confirm discard",
           hints: ["Complete the flow", "Add failure feedback", "Check soft locks", "Improve onboarding"],
         },
   )
@@ -122,11 +128,16 @@ export function WhiteboardChatPanel(props: {
   )
   const activeDraftID = createMemo(() => whiteboardChatActiveDraftID(props.messages, stoppable()))
   let scroll: HTMLDivElement | undefined
+  let discardTimer: number | undefined
 
   createEffect(() => {
     props.messages.length
     pending()
     queueMicrotask(() => scroll?.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" }))
+  })
+
+  onCleanup(() => {
+    if (discardTimer !== undefined) window.clearTimeout(discardTimer)
   })
 
   createEffect(() => {
@@ -152,6 +163,20 @@ export function WhiteboardChatPanel(props: {
     setState("stopping", true)
     const stopped = await Promise.resolve(props.onStop()).catch(() => false)
     if (stopped === false) setState("stopping", false)
+  }
+
+  const discard = (message: WhiteboardChatMessage) => {
+    if (!props.onDiscard) return
+    if (state.confirmDiscard !== message.id) {
+      if (discardTimer !== undefined) window.clearTimeout(discardTimer)
+      setState("confirmDiscard", message.id)
+      discardTimer = window.setTimeout(() => setState("confirmDiscard", ""), 4000)
+      return
+    }
+    if (discardTimer !== undefined) window.clearTimeout(discardTimer)
+    discardTimer = undefined
+    setState("confirmDiscard", "")
+    void props.onDiscard(message)
   }
 
   return (
@@ -239,10 +264,16 @@ export function WhiteboardChatPanel(props: {
                                   build={whiteboardChatBuildable(message) ? copy().buildDemo : undefined}
                                   buildHint={copy().buildHint}
                                   buildDisabled={pending() || !!props.building || !props.onBuild}
+                                  discard={copy().discard}
+                                  confirmDiscard={
+                                    state.confirmDiscard === message.id ? copy().confirmDiscard : undefined
+                                  }
+                                  discardDisabled={pending() || !!props.building}
                                   onOpen={props.onOpenVersion}
                                   onBuild={
                                     whiteboardChatBuildable(message) ? () => props.onBuild?.(message) : undefined
                                   }
+                                  onDiscard={props.onDiscard ? () => discard(message) : undefined}
                                 />
                               }
                             >
@@ -308,8 +339,12 @@ export function WhiteboardChatPanel(props: {
                             build={copy().buildDemo}
                             buildHint={copy().buildHint}
                             buildDisabled={pending() || !!props.building || !props.onBuild}
+                            discard={copy().discard}
+                            confirmDiscard={state.confirmDiscard === message.id ? copy().confirmDiscard : undefined}
+                            discardDisabled={pending() || !!props.building}
                             onOpen={props.onOpenVersion}
                             onBuild={() => props.onBuild?.(message)}
+                            onDiscard={props.onDiscard ? () => discard(message) : undefined}
                           />
                         }
                       >
@@ -465,8 +500,12 @@ function AppliedVersion(props: {
   build?: string
   buildHint?: string
   buildDisabled?: boolean
+  discard?: string
+  confirmDiscard?: string
+  discardDisabled?: boolean
   onOpen?: (boardID: string) => void
   onBuild?: () => Promise<boolean | void> | boolean | void
+  onDiscard?: () => Promise<boolean | void> | boolean | void
 }) {
   return (
     <div class="flex flex-wrap gap-1.5">
@@ -501,6 +540,17 @@ function AppliedVersion(props: {
           onClick={() => void props.onBuild?.()}
         >
           {props.build}
+        </ButtonV2>
+      </Show>
+      <Show when={props.version?.sourceBoardID && props.discard && props.onDiscard}>
+        <ButtonV2
+          data-action="whiteboard-chat-discard-version"
+          variant="ghost-muted"
+          size="small"
+          disabled={props.discardDisabled}
+          onClick={() => void props.onDiscard?.()}
+        >
+          {props.confirmDiscard ?? props.discard}
         </ButtonV2>
       </Show>
     </div>

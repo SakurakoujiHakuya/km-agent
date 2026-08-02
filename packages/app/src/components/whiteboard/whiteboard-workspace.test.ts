@@ -48,30 +48,66 @@ describe("multi-board whiteboard workspace", () => {
         active: "draft",
         boards: [
           { id: "main", name: "Main", chatMessageIDs: ["msg_old", "bad id", "msg_shared"] },
-          { id: "draft", name: "AI draft", chatMessageIDs: ["msg_shared", "msg_draft", 42] },
+          {
+            id: "draft",
+            name: "AI draft",
+            sourceBoardID: "main",
+            chatMessageIDs: ["msg_shared", "msg_draft", 42],
+          },
         ],
       }),
       false,
     )
     expect(parsed.boards).toEqual([
       { id: "main", name: "Main", chatMessageIDs: ["msg_old", "msg_shared"] },
-      { id: "draft", name: "AI draft", chatMessageIDs: ["msg_draft"] },
+      { id: "draft", name: "AI draft", chatMessageIDs: ["msg_draft"], sourceBoardID: "main" },
     ])
     expect(whiteboardChatVersions(parsed)).toEqual({
       msg_old: { boardID: "main", boardName: "Main" },
       msg_shared: { boardID: "main", boardName: "Main" },
-      msg_draft: { boardID: "draft", boardName: "AI draft" },
+      msg_draft: { boardID: "draft", boardName: "AI draft", sourceBoardID: "main" },
     })
 
-    const relinked = linkWhiteboardChatMessage(parsed, "draft", "msg_shared")
+    const relinked = linkWhiteboardChatMessage(parsed, "draft", "msg_shared", "main")
     expect(relinked.boards).toEqual([
       { id: "main", name: "Main", chatMessageIDs: ["msg_old"] },
-      { id: "draft", name: "AI draft", chatMessageIDs: ["msg_draft", "msg_shared"] },
+      {
+        id: "draft",
+        name: "AI draft",
+        sourceBoardID: "main",
+        chatMessageIDs: ["msg_draft", "msg_shared"],
+      },
     ])
     expect(linkWhiteboardChatMessage(relinked, "draft", "msg_shared")).toBe(relinked)
     expect(whiteboardChatVersions(removeWhiteboardBoard(relinked, "draft"))).toEqual({
       msg_old: { boardID: "main", boardName: "Main" },
     })
+  })
+
+  test("sanitizes revision sources and reparents descendants when a source version is removed", () => {
+    const parsed = parseWhiteboardWorkspace(
+      JSON.stringify({
+        version: 1,
+        active: "revision-2",
+        boards: [
+          { id: "main", name: "Main", sourceBoardID: "missing" },
+          { id: "revision-1", name: "Revision 1", sourceBoardID: "main", chatMessageIDs: ["msg_1"] },
+          { id: "revision-2", name: "Revision 2", sourceBoardID: "revision-1", chatMessageIDs: ["msg_2"] },
+          { id: "self", name: "Self", sourceBoardID: "self" },
+        ],
+      }),
+      false,
+    )
+    expect(parsed.boards).toEqual([
+      { id: "main", name: "Main" },
+      { id: "revision-1", name: "Revision 1", chatMessageIDs: ["msg_1"], sourceBoardID: "main" },
+      { id: "revision-2", name: "Revision 2", chatMessageIDs: ["msg_2"], sourceBoardID: "revision-1" },
+      { id: "self", name: "Self" },
+    ])
+
+    const removed = removeWhiteboardBoard(parsed, "revision-1")
+    expect(removed.boards.find((board) => board.id === "revision-2")?.sourceBoardID).toBe("main")
+    expect(whiteboardChatVersions(removed).msg_2?.sourceBoardID).toBe("main")
   })
 
   test("adds, switches, renames, and removes boards without deleting the last board", () => {
