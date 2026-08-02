@@ -5,10 +5,10 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Keybind } from "@opencode-ai/ui/keybind"
 import { Spinner } from "@opencode-ai/ui/spinner"
-import { showToast } from "@/utils/toast"
+import { dismissToast, showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { createEffect, createMemo, createSignal, For, lazy, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, lazy, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -60,6 +60,11 @@ import {
   whiteboardChatTurnWorking,
   type WhiteboardChatSendInput,
 } from "../whiteboard/whiteboard-chat"
+import {
+  advanceWhiteboardDemoHandoff,
+  emptyWhiteboardDemoHandoff,
+  queueWhiteboardDemoHandoff,
+} from "../whiteboard/whiteboard-demo-handoff"
 import {
   seedWhiteboardPrompt,
   type WhiteboardHandoffIntent,
@@ -236,6 +241,7 @@ export function SessionHeader() {
   const [exists, setExists] = createStore<Partial<Record<OpenApp, boolean>>>({
     finder: true,
   })
+  const [demoBuild, setDemoBuild] = createStore(emptyWhiteboardDemoHandoff())
 
   const apps = createMemo(() => {
     if (os() === "macos") return MAC_APPS
@@ -389,6 +395,7 @@ export function SessionHeader() {
       return false
     })
     if (!accepted) return false
+    setDemoBuild(queueWhiteboardDemoHandoff(sessionID, sync().data.session_working(sessionID)))
     local.agent.set(agent.name)
     setWhiteboard("open", false)
     return true
@@ -445,6 +452,52 @@ export function SessionHeader() {
   const [openRequest, setOpenRequest] = createStore({
     app: undefined as OpenApp | undefined,
   })
+  let demoReadyToast: number | undefined
+  const previewActionLabel = () =>
+    demoBuild.phase === "ready"
+      ? chinese()
+        ? "Demo 任务已结束，打开预览"
+        : "Demo task finished — open preview"
+      : chinese()
+        ? "Demo 预览"
+        : "Demo preview"
+  const openPreview = () => {
+    setPreview("open", true)
+    if (demoBuild.phase !== "ready") return
+    setDemoBuild(emptyWhiteboardDemoHandoff())
+    if (demoReadyToast === undefined) return
+    dismissToast(demoReadyToast)
+    demoReadyToast = undefined
+  }
+
+  createEffect(() => {
+    const sessionID = params.id
+    const next = advanceWhiteboardDemoHandoff(
+      demoBuild,
+      sessionID,
+      sessionID ? sync().data.session_working(sessionID) : false,
+    )
+    if (next === demoBuild) return
+    const notify = demoBuild.phase !== "ready" && next.phase === "ready"
+    setDemoBuild(next)
+    if (!notify) return
+    demoReadyToast = showToast({
+      persistent: true,
+      variant: "success",
+      title: chinese() ? "Demo 构建任务已结束" : "Demo build task finished",
+      description: chinese()
+        ? "打开 Demo 预览，扫描或启动项目，然后按白板试玩场景验证流程。"
+        : "Open Demo Preview to scan or start the project and validate it with the whiteboard playtest scenario.",
+      actions: [
+        { label: chinese() ? "打开 Demo 预览" : "Open Demo Preview", onClick: openPreview },
+        { label: language.t("common.dismiss"), onClick: "dismiss" },
+      ],
+    })
+  })
+
+  onCleanup(() => {
+    if (demoReadyToast !== undefined) dismissToast(demoReadyToast)
+  })
 
   const canOpen = createMemo(() => platform.platform === "desktop" && !!platform.openPath && server.isLocal())
   const current = createMemo(
@@ -463,9 +516,10 @@ export function SessionHeader() {
     whiteboardLabel: whiteboardLabel(),
     whiteboardVisible: !!projectDesignDirectory(),
     onWhiteboardOpen: () => setWhiteboard("open", true),
-    previewLabel: chinese() ? "Demo 预览" : "Demo preview",
+    previewLabel: previewActionLabel(),
+    previewReady: demoBuild.phase === "ready",
     previewVisible: !!projectDirectory(),
-    onPreviewOpen: () => setPreview("open", true),
+    onPreviewOpen: openPreview,
     reviewLabel: language.t("command.review.toggle"),
     reviewKeybind: reviewTooltipKeybind(command),
     reviewVisible: isDesktop(),
@@ -687,14 +741,19 @@ export function SessionHeader() {
                       </Tooltip>
                     </Show>
                     <Show when={projectDirectory()}>
-                      <Tooltip placement="bottom" value={chinese() ? "Demo 预览" : "Demo preview"}>
+                      <Tooltip placement="bottom" value={previewActionLabel()}>
                         <Button
                           variant="ghost"
                           class="titlebar-icon h-6 w-8 shrink-0 p-0"
-                          onClick={() => setPreview("open", true)}
-                          aria-label={chinese() ? "Demo 预览" : "Demo preview"}
+                          onClick={openPreview}
+                          aria-label={previewActionLabel()}
                         >
-                          <Icon size="small" name="window-cursor" />
+                          <span class="relative flex items-center justify-center">
+                            <Icon size="small" name="window-cursor" />
+                            <Show when={demoBuild.phase === "ready"}>
+                              <span class="absolute -right-1 -top-1 size-1.5 rounded-full bg-icon-info-base" />
+                            </Show>
+                          </span>
                         </Button>
                       </Tooltip>
                     </Show>
@@ -803,6 +862,7 @@ type SessionHeaderV2ActionsState = {
   whiteboardVisible: boolean
   onWhiteboardOpen: () => void
   previewLabel: string
+  previewReady: boolean
   previewVisible: boolean
   onPreviewOpen: () => void
   reviewLabel: string
@@ -842,7 +902,14 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
             class="!w-9 shrink-0"
             onClick={props.state.onPreviewOpen}
             aria-label={props.state.previewLabel}
-            icon={<IconV2 name="monitor" />}
+            icon={
+              <span class="relative flex items-center justify-center">
+                <IconV2 name="monitor" />
+                <Show when={props.state.previewReady}>
+                  <span class="absolute -right-1 -top-1 size-1.5 rounded-full bg-v2-icon-icon-accent" />
+                </Show>
+              </span>
+            }
           />
         </TooltipV2>
       </Show>
