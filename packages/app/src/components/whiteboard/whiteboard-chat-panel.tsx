@@ -13,7 +13,9 @@ import {
 import type { WhiteboardProposal } from "./whiteboard-proposal"
 import {
   reviewWhiteboardProposal,
+  whiteboardProposalPlayablePrompt,
   whiteboardProposalRepairPrompt,
+  type WhiteboardPlayableCheck,
   type WhiteboardProposalReview,
 } from "./whiteboard-proposal-review"
 import type { WhiteboardSceneScope, WhiteboardSceneSummary } from "./whiteboard-scene"
@@ -591,6 +593,19 @@ function ProposalReview(props: {
           terminalFailures: "无重试出口的失败",
           repair: "让 AI 修复",
           repairHint: "打开此方案的安全版本，并让 AI 继续修复检测到的流程风险",
+          playable: "试玩准备度",
+          playableReady: "可进入 Demo 验证",
+          playableMissing: "待补",
+          completePlayable: "补成可试玩",
+          completePlayableHint: "打开此方案的安全版本，让 AI 只补齐最小可试玩闭环中缺少的要素",
+          playableChecks: {
+            objective: "目标",
+            interaction: "核心操作",
+            outcome: "成败判定",
+            feedback: "结果反馈",
+            retry: "失败重试",
+            completion: "完成出口",
+          } satisfies Record<WhiteboardPlayableCheck, string>,
         }
       : {
           changes: "Compared with current board",
@@ -613,6 +628,20 @@ function ProposalReview(props: {
           terminalFailures: "Failures without a retry exit",
           repair: "Ask AI to fix",
           repairHint: "Open this proposal's safe version and ask AI to repair the detected flow risks",
+          playable: "Playtest readiness",
+          playableReady: "Ready for demo validation",
+          playableMissing: "Missing",
+          completePlayable: "Make playable",
+          completePlayableHint:
+            "Open this proposal's safe version and ask AI to add only the missing minimal-playable-loop elements",
+          playableChecks: {
+            objective: "Goal",
+            interaction: "Core action",
+            outcome: "Outcome",
+            feedback: "Feedback",
+            retry: "Retry",
+            completion: "Completion",
+          } satisfies Record<WhiteboardPlayableCheck, string>,
         },
   )
   const issues = createMemo(() => {
@@ -635,6 +664,10 @@ function ProposalReview(props: {
   const repairRequest = createMemo(() => {
     const review = value()
     return review ? whiteboardProposalRepairPrompt(review, props.chinese) : undefined
+  })
+  const playableRequest = createMemo(() => {
+    const review = value()
+    return review ? whiteboardProposalPlayablePrompt(review, props.chinese) : undefined
   })
 
   return (
@@ -684,6 +717,34 @@ function ProposalReview(props: {
             }
           >
             <For each={issues()}>{(issue) => <div>⚠ {issue}</div>}</For>
+          </Show>
+          <div class="border-t border-v2-border-border-base pt-1.5">
+            <span class="text-v2-text-text-base [font-weight:560]">{copy().playable}</span>
+            <span class="ml-1.5">
+              {review().playable.covered.length}/6
+              <Show when={review().playable.missing.length === 0}> · {copy().playableReady}</Show>
+            </span>
+          </div>
+          <Show when={review().playable.missing.length > 0}>
+            <div>
+              <span class="text-v2-text-text-base">{copy().playableMissing}：</span>
+              {review()
+                .playable.missing.map((check) => copy().playableChecks[check])
+                .join(props.chinese ? "、" : ", ")}
+            </div>
+          </Show>
+          <Show when={playableRequest() && props.onRepair}>
+            <ButtonV2
+              data-action="whiteboard-chat-complete-playable"
+              variant="neutral"
+              size="small"
+              disabled={props.repairDisabled}
+              title={copy().completePlayableHint}
+              onClick={() => void props.onRepair?.(playableRequest()!)}
+            >
+              <IconV2 name="check" size="small" />
+              {copy().completePlayable}
+            </ButtonV2>
           </Show>
           <Show when={repairRequest() && props.onRepair}>
             <ButtonV2

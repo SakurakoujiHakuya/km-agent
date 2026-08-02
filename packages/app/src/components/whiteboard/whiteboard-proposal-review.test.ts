@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { WhiteboardProposal } from "./whiteboard-proposal"
-import { reviewWhiteboardProposal, whiteboardProposalRepairPrompt } from "./whiteboard-proposal-review"
+import {
+  reviewWhiteboardProposal,
+  whiteboardProposalPlayablePrompt,
+  whiteboardProposalRepairPrompt,
+} from "./whiteboard-proposal-review"
 import type { WhiteboardSceneSummary } from "./whiteboard-scene"
 
 const current = {
@@ -56,6 +60,11 @@ describe("AI whiteboard proposal review", () => {
       unexpectedDeadEnds: [],
       terminalFailures: [],
     })
+    expect(review.playable).toEqual({
+      covered: ["objective", "interaction", "outcome", "completion"],
+      missing: ["feedback", "retry"],
+    })
+    expect(whiteboardProposalPlayablePrompt(review, true)).toContain("玩家能理解的结果反馈")
   })
 
   test("flags unreachable, isolated, incomplete, and dead-end proposal nodes", () => {
@@ -95,10 +104,54 @@ describe("AI whiteboard proposal review", () => {
       ].join("\n"),
     )
     expect(whiteboardProposalRepairPrompt(review, false)!.length).toBeLessThanOrEqual(800)
+    expect(review.playable).toEqual({
+      covered: ["objective", "interaction"],
+      missing: ["outcome", "feedback", "retry", "completion"],
+    })
+    expect(whiteboardProposalPlayablePrompt(review, false)).toBe(
+      [
+        "Complete the current board as a minimal playable game-demo flow while preserving its gameplay intent and every valid node, connection, and design note. It is missing:",
+        "- a testable outcome decision with distinct conditions",
+        "- player-readable outcome feedback",
+        "- a safe retry or recovery path after failure",
+        "- a completion exit reachable from the start",
+        "Add or adjust only what these gaps require so the player goal, core action, outcome feedback, failure recovery, and completion condition can be tested in one short run.",
+      ].join("\n"),
+    )
+    expect(whiteboardProposalPlayablePrompt(review, false)!.length).toBeLessThanOrEqual(800)
   })
 
   test("does not offer a repair turn for a healthy proposal", () => {
     expect(whiteboardProposalRepairPrompt(reviewWhiteboardProposal(current, proposal), true)).toBeUndefined()
+  })
+
+  test("recognizes a complete minimal playable loop", () => {
+    const playable = {
+      ...proposal,
+      nodes: [
+        { id: "start", type: "start", label: "Enter arena", column: 0, row: 0 },
+        { id: "action", type: "mechanic", label: "Charge the gate", column: 1, row: 0 },
+        { id: "result", type: "decision", label: "Gate charged?", column: 2, row: 0 },
+        { id: "reward", type: "reward", label: "Gate opens", column: 3, row: 0 },
+        { id: "failure", type: "failure", label: "Charge lost", column: 2, row: 1 },
+        { id: "end", type: "end", label: "Escape", column: 4, row: 0 },
+      ],
+      connections: [
+        { from: "start", to: "action" },
+        { from: "action", to: "result" },
+        { from: "result", to: "reward", label: "Yes" },
+        { from: "result", to: "failure", label: "No" },
+        { from: "reward", to: "end" },
+        { from: "failure", to: "action", label: "Retry" },
+      ],
+    } satisfies WhiteboardProposal
+    const review = reviewWhiteboardProposal({ nodes: [], connections: [], notes: [] }, playable)
+
+    expect(review.playable).toEqual({
+      covered: ["objective", "interaction", "outcome", "feedback", "retry", "completion"],
+      missing: [],
+    })
+    expect(whiteboardProposalPlayablePrompt(review, false)).toBeUndefined()
   })
 
   test("flags decision exits that are missing or repeat their player-facing condition", () => {

@@ -19,7 +19,22 @@ export type WhiteboardProposalReview = {
     unexpectedDeadEnds: string[]
     terminalFailures: string[]
   }
+  playable: {
+    covered: WhiteboardPlayableCheck[]
+    missing: WhiteboardPlayableCheck[]
+  }
 }
+
+export type WhiteboardPlayableCheck = "objective" | "interaction" | "outcome" | "feedback" | "retry" | "completion"
+
+const playableChecks: WhiteboardPlayableCheck[] = [
+  "objective",
+  "interaction",
+  "outcome",
+  "feedback",
+  "retry",
+  "completion",
+]
 
 export function whiteboardProposalRepairPrompt(review: WhiteboardProposalReview, chinese: boolean) {
   const disconnected = new Set(review.flow.disconnected)
@@ -57,6 +72,39 @@ export function whiteboardProposalRepairPrompt(review: WhiteboardProposalReview,
     ...groups.map((issue) => `- ${issue}`),
     "Give every decision clear distinct exits, prevent non-terminal paths from ending unexpectedly, and provide understandable retry or recovery paths for failures.",
   ].join("\n")
+}
+
+export function whiteboardProposalPlayablePrompt(review: WhiteboardProposalReview, chinese: boolean) {
+  if (review.playable.missing.length === 0) return undefined
+  const labels: Record<WhiteboardPlayableCheck, string> = chinese
+    ? {
+        objective: "明确的试玩目标与起止状态",
+        interaction: "玩家可执行的核心操作",
+        outcome: "可验证且条件清晰的成败判定",
+        feedback: "玩家能理解的结果反馈",
+        retry: "失败后的安全重试或恢复路径",
+        completion: "从起点可到达的完成出口",
+      }
+    : {
+        objective: "a clear playtest goal with start and end states",
+        interaction: "a core action the player can perform",
+        outcome: "a testable outcome decision with distinct conditions",
+        feedback: "player-readable outcome feedback",
+        retry: "a safe retry or recovery path after failure",
+        completion: "a completion exit reachable from the start",
+      }
+  const missing = review.playable.missing.map((check) => `- ${labels[check]}`)
+  return chinese
+    ? [
+        "把当前白板补成最小可试玩的游戏 Demo 流程，同时保留已有玩法意图、已成立的节点、连接和策划备注。当前缺失：",
+        ...missing,
+        "只新增或调整补齐这些要素所必需的内容；让玩家目标、核心操作、成败反馈、失败恢复和完成条件能够在一次短流程中被实际验证。",
+      ].join("\n")
+    : [
+        "Complete the current board as a minimal playable game-demo flow while preserving its gameplay intent and every valid node, connection, and design note. It is missing:",
+        ...missing,
+        "Add or adjust only what these gaps require so the player goal, core action, outcome feedback, failure recovery, and completion condition can be tested in one short run.",
+      ].join("\n")
 }
 
 export function reviewWhiteboardProposal(
@@ -121,6 +169,44 @@ export function reviewWhiteboardProposal(
       (next) => next === start || (!visited.has(next) && reachesStart(start, next, new Set([...visited, next]))),
     )
   const labels = (ids: readonly string[]) => ids.map((id) => proposalLabels.get(id) ?? id)
+  const cycleIDs = proposal.nodes
+    .filter((node) => reachesStart(node.id, node.id, new Set([node.id])))
+    .map((node) => node.id)
+  const proposalNodesByID = new Map(proposal.nodes.map((node) => [node.id, node]))
+  const reachesInteraction = (start: string) => {
+    const pending = [...(adjacency.get(start) ?? [])]
+    const visited = new Set([start])
+    while (pending.length > 0) {
+      const id = pending.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      const node = proposalNodesByID.get(id)
+      if (node?.type === "mechanic" || node?.type === "decision") return true
+      pending.push(...(adjacency.get(id) ?? []))
+    }
+    return false
+  }
+  const healthyDecisions = proposal.nodes.filter((node) => {
+    if (node.type !== "decision" || !reachable.has(node.id)) return false
+    const connections = outgoingConnections.get(node.id) ?? []
+    if (connections.length < 2) return false
+    const conditions = connections.map((connection) => comparisonKey(connection.label ?? ""))
+    return conditions.every(Boolean) && new Set(conditions).size === conditions.length
+  })
+  const playable: Record<WhiteboardPlayableCheck, boolean> = {
+    objective: explicitStarts.length > 0 && explicitEnds.length > 0,
+    interaction: proposal.nodes.some(
+      (node) => reachable.has(node.id) && (node.type === "mechanic" || node.type === "decision"),
+    ),
+    outcome: healthyDecisions.length > 0,
+    feedback: proposal.nodes.some(
+      (node) => reachable.has(node.id) && (node.type === "reward" || node.type === "failure"),
+    ),
+    retry: proposal.nodes.some(
+      (node) => reachable.has(node.id) && node.type === "failure" && reachesInteraction(node.id),
+    ),
+    completion: explicitEnds.some((id) => reachable.has(id)),
+  }
 
   return {
     changes: {
@@ -141,9 +227,7 @@ export function reviewWhiteboardProposal(
       starts: labels(starts),
       ends: labels(ends),
       branches: labels(proposal.nodes.filter((node) => (outgoing.get(node.id) ?? 0) > 1).map((node) => node.id)),
-      cycles: labels(
-        proposal.nodes.filter((node) => reachesStart(node.id, node.id, new Set([node.id]))).map((node) => node.id),
-      ),
+      cycles: labels(cycleIDs),
       disconnected: labels(
         proposal.nodes
           .filter((node) => (incoming.get(node.id) ?? 0) === 0 && (outgoing.get(node.id) ?? 0) === 0)
@@ -182,6 +266,10 @@ export function reviewWhiteboardProposal(
           .filter((node) => node.type === "failure" && (outgoing.get(node.id) ?? 0) === 0)
           .map((node) => node.id),
       ),
+    },
+    playable: {
+      covered: playableChecks.filter((check) => playable[check]),
+      missing: playableChecks.filter((check) => !playable[check]),
     },
   }
 }
