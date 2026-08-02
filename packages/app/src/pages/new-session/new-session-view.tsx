@@ -32,6 +32,7 @@ import {
   PREVIEW_PLAYTEST_SCENARIOS_MAX_COUNT,
   previewPlaytestScenariosStorageKey,
 } from "@/components/game-preview-scenarios"
+import { type WhiteboardChatSendInput } from "@/components/whiteboard/whiteboard-chat"
 import {
   mergeWhiteboardText,
   type WhiteboardHandoffIntent,
@@ -69,6 +70,7 @@ export function NewSessionView(props: {
   input: NewSessionDraftController["input"]
   project: PromptProjectController
   workspace: NewSessionWorkspaceController
+  onWhiteboardChatSend: (input: WhiteboardChatSendInput) => Promise<boolean>
 }) {
   const language = useLanguage()
   const local = useLocal()
@@ -242,6 +244,9 @@ export function NewSessionView(props: {
           storageKey={`km-agent.whiteboard.v1:${props.workspace.project.root()}`}
           initialTemplate={whiteboard.initialTemplate}
           initialBoardName={whiteboard.initialBoardName}
+          chatMessages={[]}
+          chatWorking={false}
+          onChatSend={props.onWhiteboardChatSend}
           onInitialTemplateApplied={() => setWhiteboard({ initialTemplate: undefined, initialBoardName: "" })}
           onClose={() => {
             setWhiteboard({ open: false, initialTemplate: undefined, initialBoardName: "" })

@@ -39,7 +39,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
 import { Effect, Layer, Option, Context, Schema, Types } from "effect"
-import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
+import { AbsolutePath, NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -488,7 +488,7 @@ export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" 
 const layer: Layer.Layer<
   Service,
   never,
-  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service
+  BackgroundJob.Service | RuntimeFlags.Service | Database.Service | EventV2Bridge.Service | ProjectV2.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -497,6 +497,7 @@ const layer: Layer.Layer<
     const background = yield* BackgroundJob.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const projects = yield* ProjectV2.Service
 
     const createNext = Effect.fn("Session.createNext")(function* (input: {
       id?: SessionID
@@ -510,12 +511,18 @@ const layer: Layer.Layer<
       metadata?: typeof Metadata.Type
       permission?: PermissionV1.Ruleset
     }) {
-      const ctx = yield* InstanceState.context
+      const project = yield* projects.resolve(AbsolutePath.make(input.directory))
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: project.id, worktree: project.directory, vcs: project.vcs?.type, sandboxes: [] })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
       const result: Info = {
         id: SessionID.descending(input.id),
         slug: Slug.create(),
         version: InstallationVersion,
-        projectID: ctx.project.id,
+        projectID: project.id,
         directory: input.directory,
         path: input.path,
         workspaceID: input.workspaceID,
@@ -1012,7 +1019,7 @@ function listByProject(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node],
+  deps: [BackgroundJob.node, RuntimeFlags.node, Database.node, EventV2Bridge.node, ProjectV2.node],
 })
 
 export * as Session from "./session"

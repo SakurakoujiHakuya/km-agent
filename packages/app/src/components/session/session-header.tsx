@@ -73,6 +73,10 @@ import {
   whiteboardPrompt,
 } from "../whiteboard/whiteboard-prompt"
 import { latestWhiteboardProposalText } from "../whiteboard/whiteboard-proposal"
+import {
+  clearWhiteboardSessionHandoff,
+  consumeWhiteboardSessionHandoff,
+} from "../whiteboard/whiteboard-session-handoff"
 
 const OPEN_APPS = [
   "vscode",
@@ -454,6 +458,14 @@ export function SessionHeader() {
     app: undefined as OpenApp | undefined,
   })
   let demoReadyToast: number | undefined
+
+  createEffect(() => {
+    const sessionID = params.id
+    if (!sessionID || !consumeWhiteboardSessionHandoff(sessionID)) return
+    setWhiteboard("open", true)
+    const timer = window.setTimeout(() => clearWhiteboardSessionHandoff(sessionID), 30_000)
+    onCleanup(() => window.clearTimeout(timer))
+  })
   const previewActionLabel = () =>
     demoBuild.phase === "ready"
       ? chinese()

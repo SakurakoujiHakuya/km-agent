@@ -169,6 +169,7 @@ export default function WhiteboardDialog(props: {
           proposalInvalid: "没有找到有效的 km-whiteboard 方案，请检查格式、节点位置和连接引用。",
           chat: "AI 共创",
           chatUnavailable: "发送首条任务后即可在白板内与 AI 实时共创。",
+          chatFailed: "AI 白板请求发送失败，请检查连接后重试。",
           chatRevisionApplied: "AI 已生成新的可编辑白板版本，原版本保持不变。",
           chatLiveStarted: "AI 正在实时搭建新版本，原白板保持不变。",
           chatLiveBackground: "AI 正在后台搭建来源白板的新版本，当前白板不会被切换。",
@@ -246,6 +247,7 @@ export default function WhiteboardDialog(props: {
           proposalInvalid: "No valid km-whiteboard proposal was found. Check its format, node positions, and links.",
           chat: "AI copilot",
           chatUnavailable: "Send the first task to enable live AI co-editing inside the whiteboard.",
+          chatFailed: "The AI board request could not be sent. Check the connection and try again.",
           chatRevisionApplied: "AI created a new editable board revision. The previous version is unchanged.",
           chatLiveStarted: "AI is building a live revision. The previous board remains unchanged.",
           chatLiveBackground:
@@ -1081,12 +1083,6 @@ export default function WhiteboardDialog(props: {
     saveWorkspace(linkWhiteboardChatRequest(state.workspace, sourceBoardID, messageID))
     setState({ chatSending: true, error: "" })
     const blob = hasContent ? await handle.exportPng(scope).catch(() => undefined) : undefined
-    if (hasContent && !blob) {
-      chatRequestSnapshots.delete(messageID)
-      saveWorkspace(unlinkWhiteboardChatRequest(state.workspace, messageID))
-      setState({ chatSending: false, error: copy().failed })
-      return false
-    }
     const accepted = await Promise.resolve(
       props.onChatSend({
         messageID,
@@ -1109,7 +1105,7 @@ export default function WhiteboardDialog(props: {
     if (!accepted) {
       chatRequestSnapshots.delete(messageID)
       saveWorkspace(unlinkWhiteboardChatRequest(state.workspace, messageID))
-      setState("error", copy().failed)
+      setState("error", copy().chatFailed)
     }
     return accepted
   }
