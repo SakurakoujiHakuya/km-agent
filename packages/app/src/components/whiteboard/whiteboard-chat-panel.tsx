@@ -47,7 +47,7 @@ export function WhiteboardChatPanel(props: {
     props.chinese
       ? {
           title: "AI 白板共创",
-          description: "描述修改，AI 会读取当前画布并在安全新版本中实时搭建。",
+          description: "描述修改，AI 会在保留手绘与参考图的安全新版本中实时调整流程。",
           empty: "试试让 AI 补全关卡流程、增加失败反馈，或检查谜题软锁。",
           placeholder: "例如：增加一条可恢复的失败分支，并保留现有主流程",
           send: "发送",
@@ -78,7 +78,8 @@ export function WhiteboardChatPanel(props: {
         }
       : {
           title: "AI board copilot",
-          description: "Describe an edit. AI reads the canvas and builds a safe revision live.",
+          description:
+            "Describe an edit. AI adjusts the flow live in a safe revision while keeping sketches and references.",
           empty: "Ask AI to complete the level flow, add failure feedback, or check the puzzle for soft locks.",
           placeholder: "For example: add a recoverable failure branch while preserving the main flow",
           send: "Send",

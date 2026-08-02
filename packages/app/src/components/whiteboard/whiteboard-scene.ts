@@ -47,6 +47,34 @@ function cleanText(value: string) {
   return value.replaceAll(/\s+/g, " ").trim().slice(0, textLimit)
 }
 
+export function whiteboardSceneDecorations<Element extends WhiteboardSceneElement>(elements: readonly Element[]) {
+  const visible = elements.filter((element) => !element.isDeleted)
+  const nodes = new Set(visible.filter((element) => nodeTypes.has(element.type)).map((element) => element.id))
+  const managed = new Set(nodes)
+
+  for (const element of visible) {
+    if (element.id.startsWith("ai-")) {
+      managed.add(element.id)
+      continue
+    }
+    if (element.type === "text" && !element.containerId) managed.add(element.id)
+    if (
+      connectionTypes.has(element.type) &&
+      element.startBinding?.elementId &&
+      element.endBinding?.elementId &&
+      nodes.has(element.startBinding.elementId) &&
+      nodes.has(element.endBinding.elementId)
+    )
+      managed.add(element.id)
+  }
+
+  for (const element of visible) {
+    if (element.type === "text" && element.containerId && managed.has(element.containerId)) managed.add(element.id)
+  }
+
+  return visible.filter((element) => !managed.has(element.id))
+}
+
 export function selectWhiteboardSceneElements<Element extends WhiteboardSceneElement>(
   elements: readonly Element[],
   selectedElementIds: Readonly<Record<string, boolean>>,

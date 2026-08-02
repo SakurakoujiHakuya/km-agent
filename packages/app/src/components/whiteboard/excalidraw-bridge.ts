@@ -11,6 +11,7 @@ import {
   inspectWhiteboardScene,
   selectWhiteboardSceneElements,
   summarizeWhiteboardScene,
+  whiteboardSceneDecorations,
   type WhiteboardSceneDiagnostics,
   type WhiteboardSceneScope,
   type WhiteboardSceneSummary,
@@ -25,6 +26,11 @@ type WhiteboardScene = {
   >
 }
 
+export type WhiteboardDecorationSnapshot = {
+  elements: readonly OrderedExcalidrawElement[]
+  files: BinaryFiles
+}
+
 export type WhiteboardHandle = {
   clear: () => void
   describeScene: (chinese: boolean, scope?: WhiteboardSceneScope) => string
@@ -37,6 +43,8 @@ export type WhiteboardHandle = {
   inspectScene: (scope?: WhiteboardSceneScope) => WhiteboardSceneDiagnostics
   summarizeScene: (scope?: WhiteboardSceneScope) => WhiteboardSceneSummary
   replaceWith: (elements: ExcalidrawElementSkeleton[]) => void
+  replaceStructureWith: (elements: ExcalidrawElementSkeleton[], decorations?: WhiteboardDecorationSnapshot) => void
+  snapshotDecorations: () => WhiteboardDecorationSnapshot
   switchScene: (storageKey: string) => void
 }
 
@@ -95,6 +103,26 @@ export async function mountExcalidrawWhiteboard(
     saveTimer = window.setTimeout(save, 350)
   }
 
+  const snapshotDecorations = (): WhiteboardDecorationSnapshot => ({
+    elements: whiteboardSceneDecorations(api?.getSceneElements() ?? []),
+    files: api?.getFiles() ?? {},
+  })
+
+  const replaceElements = (skeletons: ExcalidrawElementSkeleton[], decorations?: WhiteboardDecorationSnapshot) => {
+    if (!api) return
+    const generated = ExcalidrawLibrary.convertToExcalidrawElements(skeletons, { regenerateIds: false })
+    if (decorations) api.addFiles(Object.values(decorations.files))
+    const elements = [...(decorations?.elements ?? []), ...generated]
+    api.updateScene({
+      elements,
+      appState: { selectedElementIds: {} },
+      captureUpdate: ExcalidrawLibrary.CaptureUpdateAction.IMMEDIATELY,
+    })
+    window.requestAnimationFrame(() =>
+      api?.scrollToContent(elements, { fitToViewport: true, viewportZoomFactor: 0.82, animate: true }),
+    )
+  }
+
   const handle: WhiteboardHandle = {
     clear: () => api?.resetScene(),
     describeScene: (chinese, scope = "all") => formatWhiteboardScene(scopedElements(scope), chinese, scope),
@@ -132,18 +160,9 @@ export async function mountExcalidrawWhiteboard(
     },
     inspectScene: (scope = "all") => inspectWhiteboardScene(scopedElements(scope)),
     summarizeScene: (scope = "all") => summarizeWhiteboardScene(scopedElements(scope)),
-    replaceWith: (skeletons) => {
-      if (!api) return
-      const elements = ExcalidrawLibrary.convertToExcalidrawElements(skeletons, { regenerateIds: false })
-      api.updateScene({
-        elements,
-        appState: { selectedElementIds: {} },
-        captureUpdate: ExcalidrawLibrary.CaptureUpdateAction.IMMEDIATELY,
-      })
-      window.requestAnimationFrame(() =>
-        api?.scrollToContent(elements, { fitToViewport: true, viewportZoomFactor: 0.82, animate: true }),
-      )
-    },
+    replaceWith: (skeletons) => replaceElements(skeletons),
+    replaceStructureWith: (skeletons, decorations) => replaceElements(skeletons, decorations ?? snapshotDecorations()),
+    snapshotDecorations,
     switchScene: (storageKey) => {
       if (!api || storageKey === currentStorageKey) return
       if (saveTimer !== undefined) window.clearTimeout(saveTimer)

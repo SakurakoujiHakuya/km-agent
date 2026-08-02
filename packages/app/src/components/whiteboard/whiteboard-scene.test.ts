@@ -4,6 +4,7 @@ import {
   inspectWhiteboardScene,
   selectWhiteboardSceneElements,
   summarizeWhiteboardScene,
+  whiteboardSceneDecorations,
   type WhiteboardSceneElement,
 } from "./whiteboard-scene"
 
@@ -54,6 +55,37 @@ describe("structured whiteboard context", () => {
     expect(context).not.toContain("连接：")
     expect(context).not.toContain("未命名节点")
     expect(context).toContain("孤立节点: N1")
+  })
+
+  test("separates AI-managed flow structure from designer visual materials", () => {
+    const scene = [
+      element({ id: "node", type: "rectangle" }),
+      element({ id: "node-label", type: "text", text: "Goal", containerId: "node" }),
+      element({ id: "next", type: "ellipse", x: 300 }),
+      element({
+        id: "flow",
+        type: "arrow",
+        startBinding: { elementId: "node" },
+        endBinding: { elementId: "next" },
+      }),
+      element({ id: "flow-label", type: "text", text: "Success", containerId: "flow" }),
+      element({ id: "note", type: "text", text: "Structured note" }),
+      element({ id: "sketch", type: "freedraw" }),
+      element({ id: "reference", type: "image" }),
+      element({ id: "divider", type: "line" }),
+      element({ id: "divider-label", type: "text", text: "Mood", containerId: "divider" }),
+      element({ id: "frame", type: "frame" }),
+      element({ id: "ai-old-overlay", type: "freedraw" }),
+      element({ id: "deleted-image", type: "image", isDeleted: true }),
+    ]
+
+    expect(whiteboardSceneDecorations(scene).map((item) => item.id)).toEqual([
+      "sketch",
+      "reference",
+      "divider",
+      "divider-label",
+      "frame",
+    ])
   })
 
   test("detects graph starts, ends, branches, merges, cycles, and handoff risks", () => {

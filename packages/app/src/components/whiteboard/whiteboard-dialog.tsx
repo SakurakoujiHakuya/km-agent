@@ -10,7 +10,11 @@ import {
   previewPlaytestScenariosStorageKey,
   upsertPreviewPlaytestScenario,
 } from "../game-preview-scenarios"
-import { mountExcalidrawWhiteboard, type WhiteboardHandle } from "./excalidraw-bridge"
+import {
+  mountExcalidrawWhiteboard,
+  type WhiteboardDecorationSnapshot,
+  type WhiteboardHandle,
+} from "./excalidraw-bridge"
 import {
   whiteboardChatBuildable,
   type WhiteboardChatMessage,
@@ -413,10 +417,11 @@ export default function WhiteboardDialog(props: {
       setState("error", copy().boardLimit)
       return
     }
+    const decorations = handle.snapshotDecorations()
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return
     const workspace = renameWhiteboardBoard(added, added.active, value.title)
-    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().proposalApplied)
+    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().proposalApplied, decorations)
     setState("proposalApplied", true)
   }
 
@@ -428,7 +433,7 @@ export default function WhiteboardDialog(props: {
       setState("chatReviews", message.id, reviewWhiteboardProposal(handle.summarizeScene(), value))
     }
     if (target === "current") {
-      handle.replaceWith(whiteboardProposalElements(value))
+      handle.replaceStructureWith(whiteboardProposalElements(value))
       saveWorkspace(linkWhiteboardChatMessage(state.workspace, state.workspace.active, message.id))
       setState({
         pendingTemplate: undefined,
@@ -443,6 +448,7 @@ export default function WhiteboardDialog(props: {
       setState("error", copy().boardLimit)
       return false
     }
+    const decorations = handle.snapshotDecorations()
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
     const partial = !!message.draft && !message.draft.complete && !message.proposal
@@ -452,7 +458,7 @@ export default function WhiteboardDialog(props: {
       added.active,
       message.id,
     )
-    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied)
+    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied, decorations)
     return true
   }
 
@@ -475,7 +481,7 @@ export default function WhiteboardDialog(props: {
         window.cancelAnimationFrame(sceneSwitchFrame)
         sceneSwitchFrame = undefined
       }
-      handle.replaceWith(whiteboardProposalElements(draft.proposal))
+      handle.replaceStructureWith(whiteboardProposalElements(draft.proposal))
       const name = draft.complete
         ? draft.proposal.title
         : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
@@ -502,6 +508,7 @@ export default function WhiteboardDialog(props: {
       })
       return false
     }
+    const decorations = handle.snapshotDecorations()
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
     const name = draft.complete
@@ -520,7 +527,7 @@ export default function WhiteboardDialog(props: {
       chatLiveSignature: signature,
       chatAutoAttempted: [...state.chatAutoAttempted, message.id],
     })
-    populateNewBoard(handle, workspace, whiteboardProposalElements(draft.proposal), copy().chatLiveStarted)
+    populateNewBoard(handle, workspace, whiteboardProposalElements(draft.proposal), copy().chatLiveStarted, decorations)
     return true
   }
 
@@ -567,6 +574,7 @@ export default function WhiteboardDialog(props: {
     workspace: typeof state.workspace,
     elements: WhiteboardTemplate["elements"],
     notice: string,
+    decorations?: WhiteboardDecorationSnapshot,
   ) => {
     if (sceneSwitchFrame !== undefined) window.cancelAnimationFrame(sceneSwitchFrame)
     handle.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
@@ -574,7 +582,8 @@ export default function WhiteboardDialog(props: {
     sceneSwitchFrame = window.requestAnimationFrame(() => {
       sceneSwitchFrame = undefined
       if (mountedHandle !== handle) return
-      handle.replaceWith(elements)
+      if (decorations) handle.replaceStructureWith(elements, decorations)
+      else handle.replaceWith(elements)
       setState({ playtest: undefined, playtestPath: [] })
       showNotice(notice)
     })
