@@ -3,11 +3,13 @@ import {
   activateWhiteboardBoard,
   addWhiteboardBoard,
   defaultWhiteboardWorkspace,
+  linkWhiteboardChatMessage,
   parseWhiteboardWorkspace,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
   WHITEBOARD_BOARD_MAX_COUNT,
   whiteboardBoardStorageKey,
+  whiteboardChatVersions,
   whiteboardWorkspaceStorageKey,
 } from "./whiteboard-workspace"
 
@@ -37,6 +39,39 @@ describe("multi-board whiteboard workspace", () => {
         true,
       ),
     ).toEqual({ version: 1, active: "level-1", boards: [{ id: "level-1", name: "入口 教学" }] })
+  })
+
+  test("persists one traceable board version for each bounded AI chat message", () => {
+    const parsed = parseWhiteboardWorkspace(
+      JSON.stringify({
+        version: 1,
+        active: "draft",
+        boards: [
+          { id: "main", name: "Main", chatMessageIDs: ["msg_old", "bad id", "msg_shared"] },
+          { id: "draft", name: "AI draft", chatMessageIDs: ["msg_shared", "msg_draft", 42] },
+        ],
+      }),
+      false,
+    )
+    expect(parsed.boards).toEqual([
+      { id: "main", name: "Main", chatMessageIDs: ["msg_old", "msg_shared"] },
+      { id: "draft", name: "AI draft", chatMessageIDs: ["msg_draft"] },
+    ])
+    expect(whiteboardChatVersions(parsed)).toEqual({
+      msg_old: { boardID: "main", boardName: "Main" },
+      msg_shared: { boardID: "main", boardName: "Main" },
+      msg_draft: { boardID: "draft", boardName: "AI draft" },
+    })
+
+    const relinked = linkWhiteboardChatMessage(parsed, "draft", "msg_shared")
+    expect(relinked.boards).toEqual([
+      { id: "main", name: "Main", chatMessageIDs: ["msg_old"] },
+      { id: "draft", name: "AI draft", chatMessageIDs: ["msg_draft", "msg_shared"] },
+    ])
+    expect(linkWhiteboardChatMessage(relinked, "draft", "msg_shared")).toBe(relinked)
+    expect(whiteboardChatVersions(removeWhiteboardBoard(relinked, "draft"))).toEqual({
+      msg_old: { boardID: "main", boardName: "Main" },
+    })
   })
 
   test("adds, switches, renames, and removes boards without deleting the last board", () => {

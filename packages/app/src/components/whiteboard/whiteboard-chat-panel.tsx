@@ -11,6 +11,7 @@ import {
 import type { WhiteboardProposal } from "./whiteboard-proposal"
 import { reviewWhiteboardProposal, type WhiteboardProposalReview } from "./whiteboard-proposal-review"
 import type { WhiteboardSceneScope, WhiteboardSceneSummary } from "./whiteboard-scene"
+import type { WhiteboardChatVersion } from "./whiteboard-workspace"
 
 export function WhiteboardChatPanel(props: {
   chinese: boolean
@@ -19,6 +20,8 @@ export function WhiteboardChatPanel(props: {
   canStop: boolean
   sending: boolean
   applied: readonly string[]
+  versions?: Readonly<Record<string, WhiteboardChatVersion>>
+  activeBoardID?: string
   scene?: WhiteboardSceneSummary
   selectionCount: number
   reviews?: Readonly<Record<string, WhiteboardProposalReview | undefined>>
@@ -28,6 +31,7 @@ export function WhiteboardChatPanel(props: {
   onSend: (request: string, scope: WhiteboardSceneScope) => Promise<boolean | void>
   onStop?: () => Promise<boolean | void> | boolean | void
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
+  onOpenVersion?: (boardID: string) => void
   onClose: () => void
 }) {
   const [state, setState] = createStore({
@@ -59,6 +63,8 @@ export function WhiteboardChatPanel(props: {
           revision: "应用为新版本",
           current: "替换当前白板",
           applied: "已应用",
+          openVersion: "打开版本",
+          currentVersion: "当前版本",
           proposal: "可编辑方案",
           hints: ["补全流程", "增加失败反馈", "检查软锁", "优化新手引导"],
         }
@@ -84,6 +90,8 @@ export function WhiteboardChatPanel(props: {
           revision: "Apply as revision",
           current: "Replace current board",
           applied: "Applied",
+          openVersion: "Open version",
+          currentVersion: "Current version",
           proposal: "Editable proposal",
           hints: ["Complete the flow", "Add failure feedback", "Check soft locks", "Improve onboarding"],
         },
@@ -197,7 +205,16 @@ export function WhiteboardChatPanel(props: {
                             />
                             <Show
                               when={!props.applied.includes(message.id)}
-                              fallback={<span class="text-[11px] text-v2-text-text-muted">{copy().applied}</span>}
+                              fallback={
+                                <AppliedVersion
+                                  version={props.versions?.[message.id]}
+                                  activeBoardID={props.activeBoardID}
+                                  applied={copy().applied}
+                                  open={copy().openVersion}
+                                  current={copy().currentVersion}
+                                  onOpen={props.onOpenVersion}
+                                />
+                              }
                             >
                               <div class="flex flex-wrap gap-1.5">
                                 <ButtonV2
@@ -237,7 +254,16 @@ export function WhiteboardChatPanel(props: {
                       />
                       <Show
                         when={!props.applied.includes(message.id)}
-                        fallback={<span class="text-[11px] text-v2-text-text-muted">{copy().applied}</span>}
+                        fallback={
+                          <AppliedVersion
+                            version={props.versions?.[message.id]}
+                            activeBoardID={props.activeBoardID}
+                            applied={copy().applied}
+                            open={copy().openVersion}
+                            current={copy().currentVersion}
+                            onOpen={props.onOpenVersion}
+                          />
+                        }
                       >
                         <div class="flex flex-wrap gap-1.5">
                           <ButtonV2
@@ -371,6 +397,39 @@ export function WhiteboardChatPanel(props: {
         </div>
       </div>
     </aside>
+  )
+}
+
+function AppliedVersion(props: {
+  version?: WhiteboardChatVersion
+  activeBoardID?: string
+  applied: string
+  open: string
+  current: string
+  onOpen?: (boardID: string) => void
+}) {
+  return (
+    <Show
+      when={props.version}
+      fallback={<span class="text-[11px] text-v2-text-text-muted">{props.applied}</span>}
+      keyed
+    >
+      {(version) => {
+        const active = () => version.boardID === props.activeBoardID
+        return (
+          <ButtonV2
+            data-action="whiteboard-chat-open-version"
+            variant="ghost-muted"
+            size="small"
+            disabled={active() || !props.onOpen}
+            title={version.boardName}
+            onClick={() => props.onOpen?.(version.boardID)}
+          >
+            {active() ? props.current : props.open} · {version.boardName}
+          </ButtonV2>
+        )
+      }}
+    </Show>
   )
 }
 

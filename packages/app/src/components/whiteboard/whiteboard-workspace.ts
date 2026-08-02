@@ -1,9 +1,16 @@
 export const WHITEBOARD_BOARD_MAX_COUNT = 12
 export const WHITEBOARD_BOARD_NAME_MAX_LENGTH = 48
+export const WHITEBOARD_BOARD_CHAT_MESSAGE_MAX_COUNT = 32
 
 export type WhiteboardBoard = {
   id: string
   name: string
+  chatMessageIDs?: string[]
+}
+
+export type WhiteboardChatVersion = {
+  boardID: string
+  boardName: string
 }
 
 export type WhiteboardWorkspace = {
@@ -31,13 +38,30 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
     const fields = Object.fromEntries(Object.entries(parsed))
     if (fields.version !== 1 || !Array.isArray(fields.boards)) return fallback
     const seen = new Set<string>()
+    const seenChatMessages = new Set<string>()
     const boards = fields.boards
       .flatMap((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return []
         const board = Object.fromEntries(Object.entries(item))
         if (typeof board.id !== "string" || !boardId.test(board.id) || seen.has(board.id)) return []
         seen.add(board.id)
-        return [{ id: board.id, name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board") }]
+        const chatMessageIDs = Array.isArray(board.chatMessageIDs)
+          ? board.chatMessageIDs
+              .filter((messageID): messageID is string => whiteboardChatMessageID(messageID))
+              .slice(-WHITEBOARD_BOARD_CHAT_MESSAGE_MAX_COUNT)
+              .filter((messageID) => {
+                if (seenChatMessages.has(messageID)) return false
+                seenChatMessages.add(messageID)
+                return true
+              })
+          : []
+        return [
+          {
+            id: board.id,
+            name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board"),
+            ...(chatMessageIDs.length > 0 ? { chatMessageIDs } : {}),
+          },
+        ]
       })
       .slice(0, WHITEBOARD_BOARD_MAX_COUNT)
     if (boards.length === 0) return fallback
@@ -75,6 +99,32 @@ export function renameWhiteboardBoard(workspace: WhiteboardWorkspace, id: string
   return { ...workspace, boards: workspace.boards.map((board) => (board.id === id ? { ...board, name: next } : board)) }
 }
 
+export function linkWhiteboardChatMessage(workspace: WhiteboardWorkspace, id: string, messageID: string) {
+  if (!workspace.boards.some((board) => board.id === id) || !whiteboardChatMessageID(messageID)) return workspace
+  const current = whiteboardChatVersions(workspace)[messageID]
+  if (current?.boardID === id) return workspace
+  return {
+    ...workspace,
+    boards: workspace.boards.map((board) => {
+      const messages = (board.chatMessageIDs ?? []).filter((value) => value !== messageID)
+      if (board.id === id) messages.push(messageID)
+      const next = messages.slice(-WHITEBOARD_BOARD_CHAT_MESSAGE_MAX_COUNT)
+      const { chatMessageIDs: _, ...rest } = board
+      return next.length > 0 ? { ...rest, chatMessageIDs: next } : rest
+    }),
+  }
+}
+
+export function whiteboardChatVersions(workspace: WhiteboardWorkspace) {
+  const versions: Record<string, WhiteboardChatVersion> = {}
+  workspace.boards.forEach((board) =>
+    board.chatMessageIDs?.forEach((messageID) => {
+      versions[messageID] = { boardID: board.id, boardName: board.name }
+    }),
+  )
+  return versions
+}
+
 export function removeWhiteboardBoard(workspace: WhiteboardWorkspace, id: string) {
   if (workspace.boards.length <= 1) return workspace
   const index = workspace.boards.findIndex((board) => board.id === id)
@@ -97,4 +147,8 @@ export function whiteboardBoardStorageKey(storageKey: string, id: string) {
 function whiteboardBoardName(value: unknown, fallback: string) {
   if (typeof value !== "string") return fallback
   return value.replaceAll(/\s+/g, " ").trim().slice(0, WHITEBOARD_BOARD_NAME_MAX_LENGTH) || fallback
+}
+
+function whiteboardChatMessageID(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && !/\s/.test(value)
 }
