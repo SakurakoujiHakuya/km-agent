@@ -11,7 +11,11 @@ import {
   upsertPreviewPlaytestScenario,
 } from "../game-preview-scenarios"
 import { mountExcalidrawWhiteboard, type WhiteboardHandle } from "./excalidraw-bridge"
-import { type WhiteboardChatMessage, type WhiteboardChatSendInput } from "./whiteboard-chat"
+import {
+  type WhiteboardChatMessage,
+  type WhiteboardChatSendInput,
+  whiteboardChatEditableProposal,
+} from "./whiteboard-chat"
 import { WhiteboardChatPanel } from "./whiteboard-chat-panel"
 import { whiteboardDownloadName, whiteboardFileIssue } from "./whiteboard-file"
 import { WhiteboardPlaytestPanel } from "./whiteboard-playtest-panel"
@@ -24,10 +28,7 @@ import {
 } from "./whiteboard-playtest"
 import type { WhiteboardHandoffIntent } from "./whiteboard-prompt"
 import { parseWhiteboardProposal, whiteboardProposalElements } from "./whiteboard-proposal"
-import {
-  reviewWhiteboardProposal,
-  type WhiteboardProposalReview,
-} from "./whiteboard-proposal-review"
+import { reviewWhiteboardProposal, type WhiteboardProposalReview } from "./whiteboard-proposal-review"
 import { inspectWhiteboardScene, type WhiteboardSceneScope, type WhiteboardSceneSummary } from "./whiteboard-scene"
 import {
   whiteboardTemplate,
@@ -56,7 +57,9 @@ export default function WhiteboardDialog(props: {
   onInitialTemplateApplied?: () => void
   chatMessages?: readonly WhiteboardChatMessage[]
   chatWorking?: boolean
+  chatCanStop?: boolean
   onChatSend?: (input: WhiteboardChatSendInput) => boolean | void | Promise<boolean | void>
+  onChatStop?: () => boolean | void | Promise<boolean | void>
   onAttach: (
     file: File,
     sceneContext?: string,
@@ -411,7 +414,7 @@ export default function WhiteboardDialog(props: {
   }
 
   function applyChatProposal(message: WhiteboardChatMessage, target: "revision" | "current") {
-    const value = message.proposal ?? parseWhiteboardProposal(message.text)
+    const value = whiteboardChatEditableProposal(message)
     const handle = mountedHandle
     if (!value || !handle || state.chatApplied.includes(message.id)) return false
     if (!state.chatReviews[message.id]) {
@@ -435,7 +438,9 @@ export default function WhiteboardDialog(props: {
     }
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
-    const workspace = renameWhiteboardBoard(added, added.active, value.title)
+    const partial = !!message.draft && !message.draft.complete && !message.proposal
+    const name = partial ? `${chinese() ? "AI 草稿" : "AI draft"} · ${value.title}` : value.title
+    const workspace = renameWhiteboardBoard(added, added.active, name)
     populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied)
     setState("chatApplied", [...state.chatApplied, message.id])
     return true
@@ -469,9 +474,7 @@ export default function WhiteboardDialog(props: {
       setState({
         chatLiveSignature: signature,
         chatReviews: { ...state.chatReviews, [message.id]: review },
-        chatApplied: draft.complete
-          ? [...state.chatApplied.filter((id) => id !== message.id), message.id]
-          : state.chatApplied,
+        chatApplied: [...state.chatApplied.filter((id) => id !== message.id), message.id],
         chatAutoAttempted: draft.complete
           ? [...state.chatAutoAttempted.filter((id) => id !== message.id), message.id]
           : state.chatAutoAttempted,
@@ -498,7 +501,7 @@ export default function WhiteboardDialog(props: {
       chatLiveMessage: message.id,
       chatLiveBoard: workspace.active,
       chatLiveSignature: signature,
-      chatApplied: draft.complete ? [...state.chatApplied, message.id] : state.chatApplied,
+      chatApplied: [...state.chatApplied.filter((id) => id !== message.id), message.id],
       chatAutoAttempted: [...state.chatAutoAttempted, message.id],
     })
     populateNewBoard(handle, workspace, whiteboardProposalElements(draft.proposal), copy().chatLiveStarted)
@@ -1103,6 +1106,7 @@ export default function WhiteboardDialog(props: {
             chinese={chinese()}
             messages={props.chatMessages ?? []}
             working={!!props.chatWorking}
+            canStop={!!props.chatCanStop}
             sending={state.chatSending}
             applied={state.chatApplied}
             scene={currentScene()}
@@ -1112,6 +1116,7 @@ export default function WhiteboardDialog(props: {
             disabledReason={props.onChatSend ? undefined : copy().chatUnavailable}
             onAutoApplyChange={(value) => setState("chatAutoApply", value)}
             onSend={sendChat}
+            onStop={props.onChatStop}
             onApply={applyChatProposal}
             onClose={() => setState("chatOpen", false)}
           />

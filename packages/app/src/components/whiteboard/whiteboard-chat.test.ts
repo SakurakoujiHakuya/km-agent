@@ -4,9 +4,12 @@ import {
   WHITEBOARD_CHAT_CONTEXT_MARKER,
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
   whiteboardChatContext,
+  whiteboardChatActiveDraftID,
   whiteboardChatDisplayText,
+  whiteboardChatEditableProposal,
   whiteboardChatPrompt,
   whiteboardChatTranscript,
+  whiteboardChatTurnWorking,
 } from "./whiteboard-chat"
 
 describe("whiteboard AI chat", () => {
@@ -89,6 +92,44 @@ describe("whiteboard AI chat", () => {
     expect(transcript[1]?.draft?.complete).toBeFalse()
     expect(transcript[1]?.proposal).toBeUndefined()
     expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Building the branch.")
+    expect(whiteboardChatEditableProposal(transcript[1])?.title).toBe("Live retry")
+    expect(whiteboardChatActiveDraftID(transcript, true)).toBe("chat-assistant")
+    expect(whiteboardChatActiveDraftID(transcript, false)).toBeUndefined()
+  })
+
+  test("marks only the latest partial assistant draft as active", () => {
+    const draft = {
+      proposal: {
+        format: "km-agent-whiteboard" as const,
+        version: 1 as const,
+        title: "Partial",
+        nodes: [{ id: "start", type: "start" as const, label: "Start", column: 0, row: 0 }],
+        connections: [],
+        notes: [],
+      },
+      complete: false,
+      eventCount: 1,
+    }
+    const messages = [
+      { id: "request", role: "user" as const, text: "Add a retry" },
+      { id: "older", role: "assistant" as const, text: "", draft },
+      { id: "latest", role: "assistant" as const, text: "", draft },
+    ]
+
+    expect(whiteboardChatActiveDraftID(messages, true)).toBe("latest")
+    expect(
+      whiteboardChatActiveDraftID([...messages, { id: "next", role: "user", text: "Continue" }], true),
+    ).toBeUndefined()
+    expect(whiteboardChatEditableProposal(messages[1])?.title).toBe("Partial")
+    expect(whiteboardChatDisplayText(messages[1], false, false)).toBe("An editable partial board draft was kept.")
+    expect(whiteboardChatTurnWorking(messages, "request", true)).toBeTrue()
+    expect(whiteboardChatTurnWorking(messages, "unrelated-message", true)).toBeFalse()
+    expect(whiteboardChatTurnWorking(messages, "request", false)).toBeFalse()
+  })
+
+  test("recognizes a whiteboard request before the assistant starts streaming", () => {
+    const messages = [{ id: "request", role: "user" as const, text: "Add a retry" }]
+    expect(whiteboardChatTurnWorking(messages, "request", true)).toBeTrue()
   })
 
   test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {

@@ -57,6 +57,7 @@ import {
   whiteboardChatContext,
   whiteboardChatPrompt,
   whiteboardChatTranscript,
+  whiteboardChatTurnWorking,
   type WhiteboardChatSendInput,
 } from "../whiteboard/whiteboard-chat"
 import {
@@ -216,6 +217,16 @@ export function SessionHeader() {
   const whiteboardChatMessages = createMemo(() =>
     whiteboardChatTranscript(params.id ? (sync().data.message[params.id] ?? []) : [], sync().data.part),
   )
+  const whiteboardChatCanStop = createMemo(() => {
+    const sessionID = params.id
+    if (!sessionID) return false
+    const messages = sync().data.message[sessionID] ?? []
+    return whiteboardChatTurnWorking(
+      whiteboardChatMessages(),
+      messages.toReversed().find((message) => message.role === "user")?.id,
+      sync().data.session_working(sessionID),
+    )
+  })
   const os = createMemo(() => detectOS(platform))
   const isV2 = settings.general.newLayoutDesigns
   const search = settings.visibility.search
@@ -351,7 +362,8 @@ export function SessionHeader() {
     const model = local.model.current()
     const agent = sync().data.agent.find((item) => item.name === "plan") ?? local.agent.current()
     if (!sessionID || !model || !agent) return false
-    const attachment = input.image && model.capabilities.input.image ? await promptImageAttachment(input.image) : undefined
+    const attachment =
+      input.image && model.capabilities.input.image ? await promptImageAttachment(input.image) : undefined
     const text = whiteboardChatPrompt(input.request, chinese())
     const context = whiteboardChatContext(input.boardName, input.sceneContext, chinese(), input.scope)
     return sendFollowupDraft({
@@ -373,6 +385,19 @@ export function SessionHeader() {
       showRequestError(language, error)
       return false
     })
+  }
+
+  const stopWhiteboardChat = async () => {
+    const sessionID = params.id
+    if (!sessionID) return false
+    serverSync().session.set("todo", sessionID, [])
+    return sdk()
+      .api.session.interrupt({ sessionID })
+      .then(() => true)
+      .catch((error: unknown) => {
+        showRequestError(language, error)
+        return false
+      })
   }
 
   const [prefs, setPrefs] = persisted(Persist.global("open.app"), createStore({ app: "finder" as OpenApp }))
@@ -721,7 +746,9 @@ export function SessionHeader() {
           assistantText={whiteboardProposal()}
           chatMessages={whiteboardChatMessages()}
           chatWorking={params.id ? sync().data.session_working(params.id) : false}
+          chatCanStop={whiteboardChatCanStop()}
           onChatSend={sendWhiteboardChat}
+          onChatStop={stopWhiteboardChat}
           onAttach={attachWhiteboard}
           onClose={() => setWhiteboard("open", false)}
         />

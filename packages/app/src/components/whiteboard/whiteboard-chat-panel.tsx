@@ -4,20 +4,19 @@ import { createEffect, createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
+  whiteboardChatActiveDraftID,
   whiteboardChatDisplayText,
   type WhiteboardChatMessage,
 } from "./whiteboard-chat"
 import type { WhiteboardProposal } from "./whiteboard-proposal"
-import {
-  reviewWhiteboardProposal,
-  type WhiteboardProposalReview,
-} from "./whiteboard-proposal-review"
+import { reviewWhiteboardProposal, type WhiteboardProposalReview } from "./whiteboard-proposal-review"
 import type { WhiteboardSceneScope, WhiteboardSceneSummary } from "./whiteboard-scene"
 
 export function WhiteboardChatPanel(props: {
   chinese: boolean
   messages: readonly WhiteboardChatMessage[]
   working: boolean
+  canStop: boolean
   sending: boolean
   applied: readonly string[]
   scene?: WhiteboardSceneSummary
@@ -27,10 +26,15 @@ export function WhiteboardChatPanel(props: {
   disabledReason?: string
   onAutoApplyChange: (value: boolean) => void
   onSend: (request: string, scope: WhiteboardSceneScope) => Promise<boolean | void>
+  onStop?: () => Promise<boolean | void> | boolean | void
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
   onClose: () => void
 }) {
-  const [state, setState] = createStore({ input: "", scope: "all" as WhiteboardSceneScope })
+  const [state, setState] = createStore({
+    input: "",
+    scope: "all" as WhiteboardSceneScope,
+    stopping: false,
+  })
   const copy = createMemo(() =>
     props.chinese
       ? {
@@ -39,8 +43,12 @@ export function WhiteboardChatPanel(props: {
           empty: "试试让 AI 补全关卡流程、增加失败反馈，或检查谜题软锁。",
           placeholder: "例如：增加一条可恢复的失败分支，并保留现有主流程",
           send: "发送",
+          stop: "停止生成",
+          stopping: "正在停止…",
           thinking: "AI 正在调整当前白板…",
+          busy: "当前任务正在运行，结束后可继续共创。",
           streaming: "正在实时搭建",
+          partial: "已停止的部分草稿",
           nodes: "节点",
           connections: "连接",
           scope: "编辑范围",
@@ -60,8 +68,12 @@ export function WhiteboardChatPanel(props: {
           empty: "Ask AI to complete the level flow, add failure feedback, or check the puzzle for soft locks.",
           placeholder: "For example: add a recoverable failure branch while preserving the main flow",
           send: "Send",
+          stop: "Stop generating",
+          stopping: "Stopping…",
           thinking: "AI is adjusting the current board…",
+          busy: "Another task is running. Continue co-editing when it finishes.",
           streaming: "Building live",
+          partial: "Stopped partial draft",
           nodes: "nodes",
           connections: "links",
           scope: "Edit scope",
@@ -77,6 +89,8 @@ export function WhiteboardChatPanel(props: {
         },
   )
   const pending = createMemo(() => props.sending || props.working)
+  const stoppable = createMemo(() => props.sending || props.canStop)
+  const activeDraftID = createMemo(() => whiteboardChatActiveDraftID(props.messages, stoppable()))
   let scroll: HTMLDivElement | undefined
 
   createEffect(() => {
@@ -90,12 +104,24 @@ export function WhiteboardChatPanel(props: {
     setState("scope", "all")
   })
 
+  createEffect(() => {
+    if (pending() || !state.stopping) return
+    setState("stopping", false)
+  })
+
   const send = async () => {
     const request = state.input.trim()
     if (!request || pending() || props.disabledReason) return
     const accepted = await props.onSend(request, state.scope)
     if (accepted === false) return
     setState("input", "")
+  }
+
+  const stop = async () => {
+    if (!props.onStop || state.stopping) return
+    setState("stopping", true)
+    const stopped = await Promise.resolve(props.onStop()).catch(() => false)
+    if (stopped === false) setState("stopping", false)
   }
 
   return (
@@ -142,16 +168,60 @@ export function WhiteboardChatPanel(props: {
                       : "border border-v2-border-border-base bg-v2-background-bg-base text-v2-text-text-base"
                   }`}
                 >
-                  <div class="whitespace-pre-wrap break-words">{whiteboardChatDisplayText(message, props.chinese)}</div>
-                  <Show when={message.role === "assistant" && message.draft && !message.proposal}>
-                    <div
-                      data-component="whiteboard-live-draft"
-                      class="mt-2 flex items-center gap-1.5 border-t border-v2-border-border-base pt-2 text-[11px] text-v2-text-text-muted"
-                    >
-                      <span class="size-1.5 animate-pulse rounded-full bg-v2-background-bg-accent" />
-                      {copy().streaming} · {message.draft?.proposal.nodes.length} {copy().nodes} ·{" "}
-                      {message.draft?.proposal.connections.length} {copy().connections}
-                    </div>
+                  <div class="whitespace-pre-wrap break-words">
+                    {whiteboardChatDisplayText(message, props.chinese, activeDraftID() === message.id)}
+                  </div>
+                  <Show when={message.role === "assistant" && !message.proposal ? message.draft : undefined} keyed>
+                    {(draft) => (
+                      <div
+                        data-component="whiteboard-live-draft"
+                        class="mt-2 border-t border-v2-border-border-base pt-2"
+                      >
+                        <div class="flex items-center gap-1.5 text-[11px] text-v2-text-text-muted">
+                          <span
+                            class={`size-1.5 rounded-full bg-v2-background-bg-accent ${
+                              activeDraftID() === message.id ? "animate-pulse" : "opacity-60"
+                            }`}
+                          />
+                          {activeDraftID() === message.id ? copy().streaming : copy().partial} ·{" "}
+                          {draft.proposal.nodes.length} {copy().nodes} · {draft.proposal.connections.length}{" "}
+                          {copy().connections}
+                        </div>
+                        <Show when={activeDraftID() !== message.id}>
+                          <div class="mt-2">
+                            <ProposalReview
+                              chinese={props.chinese}
+                              proposal={draft.proposal}
+                              current={props.scene}
+                              review={props.reviews?.[message.id]}
+                            />
+                            <Show
+                              when={!props.applied.includes(message.id)}
+                              fallback={<span class="text-[11px] text-v2-text-text-muted">{copy().applied}</span>}
+                            >
+                              <div class="flex flex-wrap gap-1.5">
+                                <ButtonV2
+                                  data-action="whiteboard-chat-apply-partial-revision"
+                                  variant="contrast"
+                                  size="small"
+                                  onClick={() => props.onApply(message, "revision")}
+                                >
+                                  {copy().revision}
+                                </ButtonV2>
+                                <ButtonV2
+                                  data-action="whiteboard-chat-apply-partial-current"
+                                  variant="ghost-muted"
+                                  size="small"
+                                  onClick={() => props.onApply(message, "current")}
+                                >
+                                  {copy().current}
+                                </ButtonV2>
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
+                    )}
                   </Show>
                   <Show when={message.role === "assistant" && message.proposal}>
                     <div class="mt-2 border-t border-v2-border-border-base pt-2">
@@ -198,7 +268,7 @@ export function WhiteboardChatPanel(props: {
         <Show when={pending()}>
           <div class="flex items-center gap-2 text-[11px] text-v2-text-text-muted">
             <span class="size-1.5 animate-pulse rounded-full bg-v2-background-bg-accent" />
-            {copy().thinking}
+            {stoppable() ? copy().thinking : copy().busy}
           </div>
         </Show>
       </div>
@@ -274,15 +344,30 @@ export function WhiteboardChatPanel(props: {
           <span class="text-[10px] text-v2-text-text-muted">
             {state.input.length}/{WHITEBOARD_CHAT_REQUEST_MAX_LENGTH} · Enter
           </span>
-          <ButtonV2
-            data-action="whiteboard-chat-send"
-            variant="contrast"
-            size="small"
-            disabled={!state.input.trim() || pending() || !!props.disabledReason}
-            onClick={() => void send()}
+          <Show
+            when={pending() && stoppable() && props.onStop}
+            fallback={
+              <ButtonV2
+                data-action="whiteboard-chat-send"
+                variant="contrast"
+                size="small"
+                disabled={!state.input.trim() || pending() || !!props.disabledReason}
+                onClick={() => void send()}
+              >
+                {copy().send}
+              </ButtonV2>
+            }
           >
-            {copy().send}
-          </ButtonV2>
+            <ButtonV2
+              data-action="whiteboard-chat-stop"
+              variant="contrast"
+              size="small"
+              disabled={state.stopping}
+              onClick={() => void stop()}
+            >
+              {state.stopping ? copy().stopping : copy().stop}
+            </ButtonV2>
+          </Show>
         </div>
       </div>
     </aside>
@@ -295,7 +380,9 @@ function ProposalReview(props: {
   current?: WhiteboardSceneSummary
   review?: WhiteboardProposalReview
 }) {
-  const value = createMemo(() => props.review ?? (props.current ? reviewWhiteboardProposal(props.current, props.proposal) : undefined))
+  const value = createMemo(
+    () => props.review ?? (props.current ? reviewWhiteboardProposal(props.current, props.proposal) : undefined),
+  )
   const copy = createMemo(() =>
     props.chinese
       ? {

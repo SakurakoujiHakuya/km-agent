@@ -135,22 +135,49 @@ export function whiteboardChatTranscript(
   ).items
 }
 
-export function whiteboardChatDisplayText(message: WhiteboardChatMessage, chinese: boolean) {
-  const text = message.text
-    .replace(/```(?:km-whiteboard-live|km-whiteboard|json)\s*\n?[\s\S]*?(?:```|$)/gi, "")
-    .trim()
+export function whiteboardChatDisplayText(message: WhiteboardChatMessage, chinese: boolean, active = true) {
+  const text = message.text.replace(/```(?:km-whiteboard-live|km-whiteboard|json)\s*\n?[\s\S]*?(?:```|$)/gi, "").trim()
   if (text) return text
-  if (message.draft && !message.draft.complete)
-    return chinese ? "AI 正在实时搭建白板…" : "AI is building the board live…"
+  if (message.draft && !message.draft.complete) {
+    if (active) return chinese ? "AI 正在实时搭建白板…" : "AI is building the board live…"
+    return chinese ? "已保留可编辑的部分白板草稿。" : "An editable partial board draft was kept."
+  }
   if (message.proposal) return chinese ? "已生成可编辑的白板方案。" : "An editable whiteboard proposal is ready."
   return message.text
+}
+
+export function whiteboardChatEditableProposal(message: WhiteboardChatMessage) {
+  return message.proposal ?? message.draft?.proposal ?? parseWhiteboardProposal(message.text)
+}
+
+export function whiteboardChatActiveDraftID(messages: readonly WhiteboardChatMessage[], working: boolean) {
+  if (!working) return undefined
+  const latest = messages.at(-1)
+  if (latest?.role !== "assistant" || !latest.draft || latest.proposal) return undefined
+  return latest.id
+}
+
+export function whiteboardChatTurnWorking(
+  messages: readonly WhiteboardChatMessage[],
+  latestSessionUserMessageID: string | undefined,
+  working: boolean,
+) {
+  if (!working) return false
+  const latestUser = messages.toReversed().find((message) => message.role === "user")
+  if (!latestUser || latestUser.id !== latestSessionUserMessageID) return false
+  const latest = messages.at(-1)
+  if (!latest) return false
+  if (latest.role === "user") return true
+  return !!latest.draft && !latest.proposal
 }
 
 function whiteboardChatRequest(source: string, tagged: boolean) {
   if (tagged) {
     return (
-      source.replaceAll(`@${WHITEBOARD_CHAT_CONTEXT_FILENAME}`, "").trim().slice(0, WHITEBOARD_CHAT_REQUEST_MAX_LENGTH) ||
-      undefined
+      source
+        .replaceAll(`@${WHITEBOARD_CHAT_CONTEXT_FILENAME}`, "")
+        .trim()
+        .slice(0, WHITEBOARD_CHAT_REQUEST_MAX_LENGTH) || undefined
     )
   }
   const start = source.indexOf(requestStart)
