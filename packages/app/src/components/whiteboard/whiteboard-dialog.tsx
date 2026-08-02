@@ -93,6 +93,10 @@ export default function WhiteboardDialog(props: {
     chatApplied: [] as string[],
     chatAutoAttempted: [] as string[],
     chatReviews: {} as Record<string, WhiteboardProposalReview | undefined>,
+    chatBaselines: {} as Record<string, WhiteboardSceneSummary | undefined>,
+    chatLiveMessage: "",
+    chatLiveBoard: "",
+    chatLiveSignature: "",
     playtest: undefined as WhiteboardSceneSummary | undefined,
     playtestPath: [] as WhiteboardPlaytestStep[],
     diagnostics: inspectWhiteboardScene([]),
@@ -137,6 +141,7 @@ export default function WhiteboardDialog(props: {
           chat: "AI 共创",
           chatUnavailable: "发送首条任务后即可在白板内与 AI 实时共创。",
           chatRevisionApplied: "AI 已生成新的可编辑白板版本，原版本保持不变。",
+          chatLiveStarted: "AI 正在实时搭建新版本，原白板保持不变。",
           chatCurrentApplied: "AI 方案已替换当前白板，可使用撤销恢复。",
           playtest: "流程试玩",
           playtestEmpty: "至少需要一个矩形、菱形或椭圆节点才能开始流程试玩。",
@@ -205,6 +210,7 @@ export default function WhiteboardDialog(props: {
           chat: "AI copilot",
           chatUnavailable: "Send the first task to enable live AI co-editing inside the whiteboard.",
           chatRevisionApplied: "AI created a new editable board revision. The previous version is unchanged.",
+          chatLiveStarted: "AI is building a live revision. The previous board remains unchanged.",
           chatCurrentApplied: "AI replaced the current board. Use Undo to restore it.",
           playtest: "Flow playtest",
           playtestEmpty: "Add at least one rectangle, diamond, or ellipse node before starting a flow playtest.",
@@ -273,6 +279,21 @@ export default function WhiteboardDialog(props: {
     ]
       .filter(Boolean)
       .join(" · ")
+  })
+
+  createEffect(() => {
+    if (!state.chatAutoApply || !state.handle) return
+    const message = (props.chatMessages ?? [])
+      .toReversed()
+      .find(
+        (item) =>
+          item.role === "assistant" &&
+          !!item.draft &&
+          !initialChatMessageIDs.has(item.id) &&
+          (!state.chatAutoAttempted.includes(item.id) || state.chatLiveMessage === item.id),
+      )
+    if (!message) return
+    applyChatLiveDraft(message)
   })
 
   createEffect(() => {
@@ -417,6 +438,70 @@ export default function WhiteboardDialog(props: {
     const workspace = renameWhiteboardBoard(added, added.active, value.title)
     populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied)
     setState("chatApplied", [...state.chatApplied, message.id])
+    return true
+  }
+
+  function applyChatLiveDraft(message: WhiteboardChatMessage) {
+    const draft = message.draft
+    const handle = mountedHandle
+    if (!draft || !handle) return false
+    const signature = `${draft.complete}:${JSON.stringify(draft.proposal)}`
+    if (state.chatLiveMessage === message.id && state.chatLiveSignature === signature) return false
+
+    const existing = state.chatLiveMessage === message.id ? state.chatLiveBoard : ""
+    if (existing && state.workspace.active !== existing) {
+      setState({ chatLiveMessage: "", chatLiveBoard: "", chatLiveSignature: "" })
+      return false
+    }
+    const baseline = state.chatBaselines[message.id] ?? handle.summarizeScene()
+    const review = reviewWhiteboardProposal(baseline, draft.proposal)
+    if (existing) {
+      if (sceneSwitchFrame !== undefined) {
+        window.cancelAnimationFrame(sceneSwitchFrame)
+        sceneSwitchFrame = undefined
+      }
+      handle.replaceWith(whiteboardProposalElements(draft.proposal))
+      const name = draft.complete
+        ? draft.proposal.title
+        : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
+      const workspace = renameWhiteboardBoard(state.workspace, existing, name)
+      if (workspace !== state.workspace) saveWorkspace(workspace)
+      setState({
+        chatLiveSignature: signature,
+        chatReviews: { ...state.chatReviews, [message.id]: review },
+        chatApplied: draft.complete
+          ? [...state.chatApplied.filter((id) => id !== message.id), message.id]
+          : state.chatApplied,
+        chatAutoAttempted: draft.complete
+          ? [...state.chatAutoAttempted.filter((id) => id !== message.id), message.id]
+          : state.chatAutoAttempted,
+      })
+      if (draft.complete) showNotice(copy().chatRevisionApplied)
+      return true
+    }
+    if (state.workspace.boards.length >= WHITEBOARD_BOARD_MAX_COUNT) {
+      setState({
+        error: copy().boardLimit,
+        chatAutoAttempted: [...state.chatAutoAttempted, message.id],
+      })
+      return false
+    }
+    const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
+    if (added === state.workspace) return false
+    const name = draft.complete
+      ? draft.proposal.title
+      : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
+    const workspace = renameWhiteboardBoard(added, added.active, name)
+    setState({
+      chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
+      chatReviews: { ...state.chatReviews, [message.id]: review },
+      chatLiveMessage: message.id,
+      chatLiveBoard: workspace.active,
+      chatLiveSignature: signature,
+      chatApplied: draft.complete ? [...state.chatApplied, message.id] : state.chatApplied,
+      chatAutoAttempted: [...state.chatAutoAttempted, message.id],
+    })
+    populateNewBoard(handle, workspace, whiteboardProposalElements(draft.proposal), copy().chatLiveStarted)
     return true
   }
 

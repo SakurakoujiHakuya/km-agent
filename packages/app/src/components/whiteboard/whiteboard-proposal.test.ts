@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   latestWhiteboardProposalText,
+  parseWhiteboardLiveDraft,
   parseWhiteboardProposal,
   type WhiteboardProposal,
   whiteboardProposalElements,
@@ -86,6 +87,39 @@ describe("AI whiteboard proposal", () => {
     )
 
     expect(value?.connections).toEqual([{ from: "start", to: "end", label: undefined }])
+  })
+
+  test("builds a safe incremental draft from complete streamed events", () => {
+    const partial = `Working\n\n\`\`\`km-whiteboard-live
+{"op":"start","format":"km-agent-whiteboard-live","version":1,"title":"Live vault"}
+{"op":"node","id":"start","type":"start","label":"Enter vault","column":0,"row":0}
+{"op":"connection","from":"start","to":"reward"}
+{"op":"node","id":"reward","type":"reward","label":"Collect key","column":1,"row":0}
+{"op":"note","text":"Show a strong pickup effect"}
+{"op":"connec`
+    const draft = parseWhiteboardLiveDraft(partial)
+
+    expect(draft?.complete).toBeFalse()
+    expect(draft?.proposal.nodes).toHaveLength(2)
+    expect(draft?.proposal.connections).toEqual([{ from: "start", to: "reward", label: undefined }])
+    expect(draft?.proposal.notes).toEqual(["Show a strong pickup effect"])
+    expect(parseWhiteboardProposal(partial)).toBeUndefined()
+
+    const complete = `${partial.slice(0, partial.lastIndexOf("{"))}{"op":"done"}\n\`\`\``
+    expect(parseWhiteboardLiveDraft(complete)?.complete).toBeTrue()
+    expect(parseWhiteboardProposal(complete)?.title).toBe("Live vault")
+  })
+
+  test("does not complete a stream with invalid or unresolved events", () => {
+    const invalid = `\`\`\`km-whiteboard-live
+{"op":"start","format":"km-agent-whiteboard-live","version":1,"title":"Unsafe"}
+{"op":"node","id":"start","type":"start","label":"Start","column":0,"row":0}
+{"op":"connection","from":"start","to":"missing"}
+{"op":"done"}
+\`\`\``
+
+    expect(parseWhiteboardLiveDraft(invalid)?.complete).toBeFalse()
+    expect(parseWhiteboardProposal(invalid)).toBeUndefined()
   })
 
   test("creates editable bound shapes, arrows, heading, and notes", () => {

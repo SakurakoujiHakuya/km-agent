@@ -17,7 +17,9 @@ describe("whiteboard AI chat", () => {
     const context = whiteboardChatContext("机关房", "Structured board: start -> switch", true)
     expect(context).toContain("机关房")
     expect(context).toContain("Structured board: start -> switch")
-    expect(context).toContain("km-whiteboard")
+    expect(context).toContain("km-whiteboard-live")
+    expect(context).toContain('{"op":"done"}')
+    expect(context).toContain("先输出全部 node")
     expect(context).toContain("不要修改项目文件")
     expect(context).toContain(WHITEBOARD_CHAT_CONTEXT_MARKER)
 
@@ -61,6 +63,32 @@ describe("whiteboard AI chat", () => {
     expect(transcript[1]).toMatchObject({ id: "chat-assistant", role: "assistant" })
     expect(transcript[1]?.proposal?.title).toBe("Retry")
     expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Done.")
+  })
+
+  test("exposes a streamed draft before the final proposal is complete", () => {
+    const live = `Building the branch.\n\n\`\`\`km-whiteboard-live
+{"op":"start","format":"km-agent-whiteboard-live","version":1,"title":"Live retry"}
+{"op":"node","id":"start","type":"start","label":"Start","column":0,"row":0}
+{"op":"node","id":"retry","type":"failure","label":"Retry","column":1,"row":0}
+{"op":"connec`
+    const transcript = whiteboardChatTranscript(
+      [
+        { id: "chat-user", role: "user" },
+        { id: "chat-assistant", role: "assistant" },
+      ],
+      {
+        "chat-user": [
+          { type: "text", text: whiteboardChatPrompt("Add retry", false) },
+          { type: "file", filename: WHITEBOARD_CHAT_CONTEXT_FILENAME },
+        ],
+        "chat-assistant": [{ type: "text", text: live }],
+      },
+    )
+
+    expect(transcript[1]?.draft?.proposal.nodes).toHaveLength(2)
+    expect(transcript[1]?.draft?.complete).toBeFalse()
+    expect(transcript[1]?.proposal).toBeUndefined()
+    expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Building the branch.")
   })
 
   test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {

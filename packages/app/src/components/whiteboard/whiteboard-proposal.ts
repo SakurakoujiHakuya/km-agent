@@ -21,6 +21,12 @@ export type WhiteboardProposal = {
   notes: string[]
 }
 
+export type WhiteboardLiveDraft = {
+  proposal: WhiteboardProposal
+  complete: boolean
+  eventCount: number
+}
+
 const nodeTypes: WhiteboardProposalNodeType[] = ["start", "step", "decision", "mechanic", "reward", "failure", "end"]
 const idPattern = /^[a-zA-Z0-9_-]{1,48}$/
 const maxSourceLength = 100_000
@@ -30,11 +36,65 @@ const maxNotes = 16
 
 export function parseWhiteboardProposal(source: string | undefined): WhiteboardProposal | undefined {
   if (!source || source.length > maxSourceLength) return undefined
+  const live = parseWhiteboardLiveDraft(source)
+  if (live?.complete) return live.proposal
   const fenced = [...source.matchAll(/```(?:km-whiteboard|json)\s*\n?([\s\S]*?)```/gi)].map((match) => match[1] ?? "")
   return [...fenced, source]
     .toReversed()
     .flatMap((candidate) => parseProposalJSON(candidate.trim()) ?? [])
     .at(0)
+}
+
+export function parseWhiteboardLiveDraft(source: string | undefined): WhiteboardLiveDraft | undefined {
+  if (!source || source.length > maxSourceLength) return undefined
+  const block = [...source.matchAll(/```km-whiteboard-live\s*\n?([\s\S]*?)(?:```|$)/gi)].at(-1)?.[1]
+  if (!block) return undefined
+  const lines = block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, maxNodes + maxConnections + maxNotes + 4)
+  const parsed = lines.map(parseLiveLine)
+  const events = parsed.filter((event): event is Record<string, unknown> => !!event)
+  const starts = events.filter((event) => event.op === "start")
+  if (starts.length !== 1 || starts[0]?.format !== "km-agent-whiteboard-live" || starts[0]?.version !== 1)
+    return undefined
+
+  const nodeEvents = events.filter((event) => event.op === "node")
+  if (nodeEvents.length === 0) return undefined
+  const connectionEvents = events.filter((event) => event.op === "connection")
+  const noteEvents = events.filter((event) => event.op === "note")
+  const nodeIds = new Set(
+    nodeEvents.flatMap((event) => (typeof event.id === "string" ? [event.id] : [])),
+  )
+  const connected = connectionEvents.filter(
+    (event) =>
+      typeof event.from === "string" &&
+      typeof event.to === "string" &&
+      nodeIds.has(event.from) &&
+      nodeIds.has(event.to),
+  )
+  const proposal = parseProposal({
+    format: "km-agent-whiteboard",
+    version: 1,
+    title: starts[0]?.title,
+    nodes: nodeEvents.map(withoutLiveOperation),
+    connections: connected.map(withoutLiveOperation),
+    notes: noteEvents.map((event) => event.text),
+  })
+  if (!proposal) return undefined
+
+  const done = events.findIndex((event) => event.op === "done")
+  const complete =
+    done === events.length - 1 &&
+    connectionEvents.length === connected.length &&
+    parsed.every((event, index) => !!event || (index === parsed.length - 1 && !lines[index]?.endsWith("}"))) &&
+    events.filter((event) => event.op === "done").length === 1
+  return {
+    proposal,
+    complete,
+    eventCount: nodeEvents.length + connected.length + noteEvents.length,
+  }
 }
 
 export function latestWhiteboardProposalText(
@@ -151,6 +211,23 @@ function parseProposalJSON(source: string) {
   } catch {
     return undefined
   }
+}
+
+function parseLiveLine(source: string): Record<string, unknown> | undefined {
+  if (!source.endsWith("}")) return undefined
+  try {
+    const value: unknown = JSON.parse(source)
+    if (!isRecord(value)) return undefined
+    if (typeof value.op !== "string") return undefined
+    if (!new Set(["start", "node", "connection", "note", "done"]).has(value.op)) return undefined
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+function withoutLiveOperation(event: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(event).filter(([key]) => key !== "op"))
 }
 
 function parseProposal(value: unknown): WhiteboardProposal | undefined {

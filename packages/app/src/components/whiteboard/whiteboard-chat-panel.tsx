@@ -35,16 +35,19 @@ export function WhiteboardChatPanel(props: {
     props.chinese
       ? {
           title: "AI 白板共创",
-          description: "描述修改，AI 会读取当前画布并返回可编辑版本。",
+          description: "描述修改，AI 会读取当前画布并在安全新版本中实时搭建。",
           empty: "试试让 AI 补全关卡流程、增加失败反馈，或检查谜题软锁。",
           placeholder: "例如：增加一条可恢复的失败分支，并保留现有主流程",
           send: "发送",
           thinking: "AI 正在调整当前白板…",
+          streaming: "正在实时搭建",
+          nodes: "节点",
+          connections: "连接",
           scope: "编辑范围",
           all: "整张白板",
           selection: "选中内容",
           selectionHint: "先在画布中选中要精修的节点或分支",
-          autoApply: "自动生成新版本",
+          autoApply: "实时生成安全版本",
           revision: "应用为新版本",
           current: "替换当前白板",
           applied: "已应用",
@@ -53,16 +56,19 @@ export function WhiteboardChatPanel(props: {
         }
       : {
           title: "AI board copilot",
-          description: "Describe an edit. AI reads the current canvas and returns an editable revision.",
+          description: "Describe an edit. AI reads the canvas and builds a safe revision live.",
           empty: "Ask AI to complete the level flow, add failure feedback, or check the puzzle for soft locks.",
           placeholder: "For example: add a recoverable failure branch while preserving the main flow",
           send: "Send",
           thinking: "AI is adjusting the current board…",
+          streaming: "Building live",
+          nodes: "nodes",
+          connections: "links",
           scope: "Edit scope",
           all: "Whole board",
           selection: "Selection",
           selectionHint: "Select the nodes or branch to refine on the canvas first",
-          autoApply: "Auto-create a revision",
+          autoApply: "Build a safe revision live",
           revision: "Apply as revision",
           current: "Replace current board",
           applied: "Applied",
@@ -137,6 +143,16 @@ export function WhiteboardChatPanel(props: {
                   }`}
                 >
                   <div class="whitespace-pre-wrap break-words">{whiteboardChatDisplayText(message, props.chinese)}</div>
+                  <Show when={message.role === "assistant" && message.draft && !message.proposal}>
+                    <div
+                      data-component="whiteboard-live-draft"
+                      class="mt-2 flex items-center gap-1.5 border-t border-v2-border-border-base pt-2 text-[11px] text-v2-text-text-muted"
+                    >
+                      <span class="size-1.5 animate-pulse rounded-full bg-v2-background-bg-accent" />
+                      {copy().streaming} · {message.draft?.proposal.nodes.length} {copy().nodes} ·{" "}
+                      {message.draft?.proposal.connections.length} {copy().connections}
+                    </div>
+                  </Show>
                   <Show when={message.role === "assistant" && message.proposal}>
                     <div class="mt-2 border-t border-v2-border-border-base pt-2">
                       <div class="mb-2 flex items-center gap-1.5 text-[11px] text-v2-text-text-muted">

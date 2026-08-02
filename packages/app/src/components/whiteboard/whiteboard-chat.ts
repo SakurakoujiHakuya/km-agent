@@ -1,5 +1,9 @@
-import { parseWhiteboardProposal, type WhiteboardProposal } from "./whiteboard-proposal"
-import { whiteboardPrompt } from "./whiteboard-prompt"
+import {
+  parseWhiteboardLiveDraft,
+  parseWhiteboardProposal,
+  type WhiteboardLiveDraft,
+  type WhiteboardProposal,
+} from "./whiteboard-proposal"
 import type { WhiteboardSceneScope } from "./whiteboard-scene"
 
 export const WHITEBOARD_CHAT_REQUEST_MAX_LENGTH = 800
@@ -13,6 +17,7 @@ export type WhiteboardChatMessage = {
   id: string
   role: "user" | "assistant"
   text: string
+  draft?: WhiteboardLiveDraft
   proposal?: WhiteboardProposal
 }
 
@@ -43,11 +48,30 @@ export function whiteboardChatContext(
   return [
     WHITEBOARD_CHAT_CONTEXT_MARKER,
     whiteboardChatScopeInstruction(boardName, chinese, scope),
-    whiteboardPrompt(chinese, "refine"),
+    whiteboardLiveProposalInstruction(chinese),
     sceneContext.trim(),
   ]
     .filter(Boolean)
     .join("\n\n")
+}
+
+function whiteboardLiveProposalInstruction(chinese: boolean) {
+  if (chinese) {
+    return `先识别白板中的所有节点、标签、箭头、分支和循环，在保留原意的基础上完成修改。不要修改项目文件。简短说明后，输出一个 \`\`\`km-whiteboard-live 代码块；每行只能包含一个完整 JSON 对象，并严格按以下顺序输出：
+{"op":"start","format":"km-agent-whiteboard-live","version":1,"title":"方案名称"}
+{"op":"node","id":"start","type":"start","label":"节点文字","column":0,"row":0}
+{"op":"connection","from":"start","to":"next","label":"可选条件"}
+{"op":"note","text":"策划备注"}
+{"op":"done"}
+先输出全部 node，再输出 connection、note 和唯一的 done。节点 type 只能是 start、step、decision、mechanic、reward、failure、end；column 为 0-7、row 为 0-9 的整数且位置不得重复；引用必须指向已声明节点。不要输出数组、注释、空行或额外字段。`
+  }
+  return `First identify every node, label, arrow, branch, and loop, then make the requested edit while preserving the designer's intent. Do not modify project files. After a short explanation, output one \`\`\`km-whiteboard-live code block with exactly one complete JSON object per line in this order:
+{"op":"start","format":"km-agent-whiteboard-live","version":1,"title":"Proposal name"}
+{"op":"node","id":"start","type":"start","label":"Node text","column":0,"row":0}
+{"op":"connection","from":"start","to":"next","label":"Optional condition"}
+{"op":"note","text":"Design note"}
+{"op":"done"}
+Output every node first, followed by connections, notes, and exactly one done event. Node type must be start, step, decision, mechanic, reward, failure, or end. column must be 0-7 and row 0-9, with no duplicate position. References must target declared nodes. Do not output arrays, comments, blank lines, or extra fields.`
 }
 
 function whiteboardChatScopeInstruction(boardName: string, chinese: boolean, scope: WhiteboardSceneScope) {
@@ -92,6 +116,7 @@ export function whiteboardChatTranscript(
       }
 
       if (message.role !== "assistant" || !result.active || !text.trim()) return result
+      const draft = parseWhiteboardLiveDraft(text)
       return {
         active: false,
         items: [
@@ -100,7 +125,8 @@ export function whiteboardChatTranscript(
             id: message.id,
             role: "assistant",
             text: text.trim(),
-            proposal: parseWhiteboardProposal(text),
+            draft,
+            proposal: draft?.complete ? draft.proposal : parseWhiteboardProposal(text),
           },
         ],
       }
@@ -110,8 +136,12 @@ export function whiteboardChatTranscript(
 }
 
 export function whiteboardChatDisplayText(message: WhiteboardChatMessage, chinese: boolean) {
-  const text = message.text.replace(/```(?:km-whiteboard|json)\s*\n?[\s\S]*?```/gi, "").trim()
+  const text = message.text
+    .replace(/```(?:km-whiteboard-live|km-whiteboard|json)\s*\n?[\s\S]*?(?:```|$)/gi, "")
+    .trim()
   if (text) return text
+  if (message.draft && !message.draft.complete)
+    return chinese ? "AI 正在实时搭建白板…" : "AI is building the board live…"
   if (message.proposal) return chinese ? "已生成可编辑的白板方案。" : "An editable whiteboard proposal is ready."
   return message.text
 }
