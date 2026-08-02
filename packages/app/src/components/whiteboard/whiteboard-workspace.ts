@@ -7,6 +7,7 @@ export type WhiteboardBoard = {
   id: string
   name: string
   aiStatus?: "generating" | "ready"
+  aiSessionID?: string
   chatMessageIDs?: string[]
   chatRequestIDs?: string[]
   sourceBoardID?: string
@@ -72,11 +73,13 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
               })
           : []
         const aiStatus = whiteboardBoardAIStatus(board.aiStatus)
+        const aiSessionID = whiteboardChatMessageID(board.aiSessionID) ? board.aiSessionID : undefined
         return [
           {
             id: board.id,
             name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board"),
             ...(aiStatus ? { aiStatus } : {}),
+            ...(aiStatus === "generating" && aiSessionID ? { aiSessionID } : {}),
             ...(chatMessageIDs.length > 0 ? { chatMessageIDs } : {}),
             ...(chatRequestIDs.length > 0 ? { chatRequestIDs } : {}),
             ...(typeof board.sourceBoardID === "string" && boardId.test(board.sourceBoardID)
@@ -147,17 +150,36 @@ export function setWhiteboardBoardAIStatus(
   workspace: WhiteboardWorkspace,
   id: string,
   status?: WhiteboardBoard["aiStatus"],
+  sessionID?: string,
 ): WhiteboardWorkspace {
   const current = workspace.boards.find((board) => board.id === id)
-  if (!current || current.aiStatus === status) return workspace
+  const owner = status === "generating" && whiteboardChatMessageID(sessionID) ? sessionID : undefined
+  if (!current || (current.aiStatus === status && current.aiSessionID === owner)) return workspace
   return {
     ...workspace,
     boards: workspace.boards.map((board) => {
       if (board.id !== id) return board
-      const { aiStatus: _, ...rest } = board
-      return status ? { ...rest, aiStatus: status } : rest
+      const { aiStatus: _, aiSessionID: __, ...rest } = board
+      return status ? { ...rest, aiStatus: status, ...(owner ? { aiSessionID: owner } : {}) } : rest
     }),
   }
+}
+
+export function reconcileWhiteboardBoardAIStatuses(
+  workspace: WhiteboardWorkspace,
+  sessionID: string | undefined,
+  working?: boolean,
+): WhiteboardWorkspace {
+  const owner = whiteboardChatMessageID(sessionID) ? sessionID : undefined
+  let changed = false
+  const boards = workspace.boards.map((board) => {
+    if (board.aiStatus !== "generating") return board
+    if (owner && board.aiSessionID === owner && working !== false) return board
+    changed = true
+    const { aiStatus: _, aiSessionID: __, ...rest } = board
+    return rest
+  })
+  return changed ? { ...workspace, boards } : workspace
 }
 
 export function whiteboardAIRevisionStatus(active: boolean, finished: boolean): WhiteboardBoard["aiStatus"] {

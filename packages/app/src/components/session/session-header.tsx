@@ -453,7 +453,7 @@ export function SessionHeader() {
   const [prefs, setPrefs] = persisted(Persist.global("open.app"), createStore({ app: "finder" as OpenApp }))
   const [menu, setMenu] = createStore({ open: false })
   const [preview, setPreview] = createStore({ open: false })
-  const [whiteboard, setWhiteboard] = createStore({ open: false })
+  const [whiteboard, setWhiteboard] = createStore({ open: false, chat: false })
   const [openRequest, setOpenRequest] = createStore({
     app: undefined as OpenApp | undefined,
   })
@@ -462,7 +462,7 @@ export function SessionHeader() {
   createEffect(() => {
     const sessionID = params.id
     if (!sessionID || !consumeWhiteboardSessionHandoff(sessionID)) return
-    setWhiteboard("open", true)
+    setWhiteboard({ open: true, chat: true })
     const timer = window.setTimeout(() => clearWhiteboardSessionHandoff(sessionID), 30_000)
     onCleanup(() => window.clearTimeout(timer))
   })
@@ -854,6 +854,8 @@ export function SessionHeader() {
           directory={projectDesignDirectory()}
           storageKey={`km-agent.whiteboard.v1:${projectDesignDirectory()}`}
           assistantText={whiteboardProposal()}
+          initialChatOpen={whiteboard.chat}
+          chatSessionID={params.id}
           chatMessages={whiteboardChatMessages()}
           chatWorking={params.id ? sync().data.session_working(params.id) : false}
           chatCanStop={whiteboardChatCanStop()}
@@ -861,7 +863,7 @@ export function SessionHeader() {
           onChatStop={stopWhiteboardChat}
           onBuild={buildWhiteboardDemo}
           onAttach={attachWhiteboard}
-          onClose={() => setWhiteboard("open", false)}
+          onClose={() => setWhiteboard({ open: false, chat: false })}
         />
       </Show>
     </>

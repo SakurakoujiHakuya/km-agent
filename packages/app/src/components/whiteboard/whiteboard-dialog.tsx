@@ -58,6 +58,7 @@ import {
   linkWhiteboardChatMessage,
   linkWhiteboardChatRequest,
   parseWhiteboardWorkspace,
+  reconcileWhiteboardBoardAIStatuses,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
   renameWhiteboardBoardUnique,
@@ -84,6 +85,8 @@ export default function WhiteboardDialog(props: {
   assistantText?: string
   initialTemplate?: WhiteboardTemplateId
   initialBoardName?: string
+  initialChatOpen?: boolean
+  chatSessionID?: string
   onInitialTemplateApplied?: () => void
   chatMessages?: readonly WhiteboardChatMessage[]
   chatWorking?: boolean
@@ -97,7 +100,9 @@ export default function WhiteboardDialog(props: {
   const language = useLanguage()
   const theme = useTheme()
   const chinese = createMemo(() => language.locale() === "zh" || language.locale() === "zht")
-  const workspace = readWhiteboardWorkspace(props.storageKey, chinese())
+  const storedWorkspace = readWhiteboardWorkspace(props.storageKey, chinese())
+  const workspace = reconcileWhiteboardBoardAIStatuses(storedWorkspace, props.chatSessionID)
+  if (workspace !== storedWorkspace) writeWhiteboardWorkspace(props.storageKey, workspace)
   const [state, setState] = createStore({
     handle: undefined as WhiteboardHandle | undefined,
     loading: true,
@@ -117,7 +122,7 @@ export default function WhiteboardDialog(props: {
     proposalSource: "",
     proposalDraft: "",
     proposalInputOpen: false,
-    chatOpen: false,
+    chatOpen: !!props.initialChatOpen,
     chatSending: false,
     chatAutoApply: true,
     chatAutoAttempted: [] as string[],
@@ -360,6 +365,15 @@ export default function WhiteboardDialog(props: {
   })
 
   createEffect(() => {
+    if (props.chatWorking) return
+    const timer = window.setTimeout(() => {
+      const workspace = reconcileWhiteboardBoardAIStatuses(state.workspace, props.chatSessionID, false)
+      if (workspace !== state.workspace) saveWorkspace(workspace)
+    }, 3_000)
+    onCleanup(() => window.clearTimeout(timer))
+  })
+
+  createEffect(() => {
     if (!state.chatAutoApply || !state.handle) return
     const message = (props.chatMessages ?? [])
       .toReversed()
@@ -558,6 +572,7 @@ export default function WhiteboardDialog(props: {
         workspace,
         state.chatLiveBoard,
         whiteboardAIRevisionStatus(active, finished),
+        props.chatSessionID,
       )
       if (workspace !== state.workspace) saveWorkspace(workspace)
       if (finished) {
@@ -608,7 +623,12 @@ export default function WhiteboardDialog(props: {
         ),
         message,
       )
-      workspace = setWhiteboardBoardAIStatus(workspace, existing, whiteboardAIRevisionStatus(active, finished))
+      workspace = setWhiteboardBoardAIStatus(
+        workspace,
+        existing,
+        whiteboardAIRevisionStatus(active, finished),
+        props.chatSessionID,
+      )
       if (workspace !== state.workspace) saveWorkspace(workspace)
       setState({
         chatLiveMessage: finished ? "" : message.id,
@@ -647,7 +667,12 @@ export default function WhiteboardDialog(props: {
       message,
     )
     const focused = chatSourceFocused(source, currentBoardID)
-    workspace = setWhiteboardBoardAIStatus(workspace, revisionBoardID, whiteboardAIRevisionStatus(focused, finished))
+    workspace = setWhiteboardBoardAIStatus(
+      workspace,
+      revisionBoardID,
+      whiteboardAIRevisionStatus(focused, finished),
+      props.chatSessionID,
+    )
     setState({
       chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
       chatReviews: { ...state.chatReviews, [message.id]: review },

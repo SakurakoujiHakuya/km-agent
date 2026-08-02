@@ -6,6 +6,7 @@ import {
   linkWhiteboardChatMessage,
   linkWhiteboardChatRequest,
   parseWhiteboardWorkspace,
+  reconcileWhiteboardBoardAIStatuses,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
   renameWhiteboardBoardUnique,
@@ -154,6 +155,33 @@ describe("multi-board whiteboard workspace", () => {
     expect(whiteboardAIRevisionShouldFocus("source", "source", 4, 5)).toBeFalse()
     expect(whiteboardAIRevisionShouldFocus("source", "other", 4, 4)).toBeFalse()
     expect(whiteboardAIRevisionShouldFocus("source", "source", undefined, 5)).toBeTrue()
+  })
+
+  test("keeps generating attention only for the active task", () => {
+    const parsed = parseWhiteboardWorkspace(
+      JSON.stringify({
+        version: 1,
+        active: "main",
+        boards: [
+          { id: "main", name: "Main", aiStatus: "generating", aiSessionID: "session_current" },
+          { id: "other", name: "Other", aiStatus: "generating", aiSessionID: "session_other" },
+          { id: "legacy", name: "Legacy", aiStatus: "generating" },
+          { id: "ready", name: "Ready", aiStatus: "ready", aiSessionID: "session_other" },
+        ],
+      }),
+      false,
+    )
+
+    expect(reconcileWhiteboardBoardAIStatuses(parsed, "session_current").boards).toEqual([
+      { id: "main", name: "Main", aiStatus: "generating", aiSessionID: "session_current" },
+      { id: "other", name: "Other" },
+      { id: "legacy", name: "Legacy" },
+      { id: "ready", name: "Ready", aiStatus: "ready" },
+    ])
+    expect(reconcileWhiteboardBoardAIStatuses(parsed, "session_current", false).boards[0]).toEqual({
+      id: "main",
+      name: "Main",
+    })
   })
 
   test("sanitizes revision sources and reparents descendants when a source version is removed", () => {
