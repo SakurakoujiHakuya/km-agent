@@ -27,8 +27,10 @@ import { WhiteboardPlaytestPanel } from "./whiteboard-playtest-panel"
 import {
   advanceWhiteboardPlaytest,
   formatWhiteboardPlaytestTrace,
+  whiteboardPlaytestImprovement,
   whiteboardPlaytestScenario,
   whiteboardPlaytestStarts,
+  type WhiteboardPlaytestIssue,
   type WhiteboardPlaytestStep,
 } from "./whiteboard-playtest"
 import type { WhiteboardHandoffIntent } from "./whiteboard-prompt"
@@ -829,7 +831,7 @@ export default function WhiteboardDialog(props: {
     return sendChat(request, "all")
   }
 
-  const sendChat = async (request: string, scope: WhiteboardSceneScope) => {
+  const sendChat = async (request: string, scope: WhiteboardSceneScope, extraContext?: string) => {
     const handle = state.handle
     if (!handle || !props.onChatSend || state.chatSending || (props.chatWorking && !props.chatCanStop)) return false
     if (scope === "selection" && !handle.hasSelection()) {
@@ -849,6 +851,7 @@ export default function WhiteboardDialog(props: {
         sceneContext: [
           handle.describeScene(chinese(), "all"),
           scope === "selection" ? handle.describeScene(chinese(), "selection") : "",
+          extraContext?.trim() ?? "",
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -885,6 +888,17 @@ export default function WhiteboardDialog(props: {
     const trace = formatWhiteboardPlaytestTrace(graph, state.playtestPath, chinese())
     if (!trace) return
     void attach("all", trace, "review")
+  }
+
+  const improvePlaytest = async (issue: WhiteboardPlaytestIssue, note: string) => {
+    const graph = state.playtest
+    if (!graph || !props.onChatSend || props.chatWorking || state.chatSending) return false
+    const improvement = whiteboardPlaytestImprovement(graph, state.playtestPath, issue, note, chinese())
+    if (!improvement) return false
+    const accepted = await sendChat(improvement.request, "all", improvement.context)
+    if (!accepted) return false
+    setState({ chatOpen: true, playtest: undefined, playtestPath: [] })
+    return true
   }
 
   const savePlaytestScenario = () => {
@@ -1203,6 +1217,9 @@ export default function WhiteboardDialog(props: {
                 }
                 onSaveScenario={savePlaytestScenario}
                 onReview={reviewPlaytest}
+                onImprove={props.onChatSend ? improvePlaytest : undefined}
+                improving={state.chatSending}
+                improveDisabled={!!props.chatWorking}
                 onClose={() => setState({ playtest: undefined, playtestPath: [] })}
               />
             )}

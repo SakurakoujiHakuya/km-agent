@@ -319,6 +319,55 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("converts percent-encoded and base64 text data URLs without poisoning later model turns", async () => {
+    const messageID = "m-user-text-data"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          {
+            ...basePart(messageID, "p1"),
+            type: "text",
+            text: "refine the board",
+          },
+          {
+            ...basePart(messageID, "p2"),
+            type: "file",
+            mime: "text/markdown",
+            filename: "board-context.md",
+            url: `data:text/markdown;charset=utf-8,${encodeURIComponent("节点：进入房间 → 拉下开关")}`,
+          },
+          {
+            ...basePart(messageID, "p3"),
+            type: "file",
+            mime: "text/markdown",
+            filename: "playtest.md",
+            url: "data:text/markdown;base64,5LqM5qyh5aSx6LSl5ZCO5o+Q56S65pyq5Ye6546w",
+          },
+          {
+            ...basePart(messageID, "p4"),
+            type: "file",
+            mime: "text/markdown",
+            filename: "broken.md",
+            url: "data:text/markdown;base64,%%%not-base64%%%",
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "refine the board" },
+          { type: "text", text: "[Attached text/markdown: board-context.md]\n节点：进入房间 → 拉下开关" },
+          { type: "text", text: "[Attached text/markdown: playtest.md]\n二次失败后提示未出现" },
+          { type: "text", text: "[Skipped malformed text/markdown attachment: broken.md]" },
+        ],
+      },
+    ])
+  })
+
   test("converts assistant tool completion into tool-call + tool-result messages with attachments", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"

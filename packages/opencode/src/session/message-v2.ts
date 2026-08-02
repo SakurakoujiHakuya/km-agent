@@ -128,6 +128,23 @@ function providerMeta(metadata: Record<string, any> | undefined) {
   return Object.keys(rest).length > 0 ? rest : undefined
 }
 
+const TEXT_DATA_URL_MAX_CHARS = 200_000
+
+function textDataUrl(url: string) {
+  const match = /^data:([^,]*),(.*)$/s.exec(url)
+  if (!match) return undefined
+  const metadata = match[1]?.toLowerCase() ?? ""
+  const payload = match[2] ?? ""
+  try {
+    const value = metadata.split(";").includes("base64")
+      ? new TextDecoder().decode(Uint8Array.from(atob(payload), (char) => char.charCodeAt(0)))
+      : decodeURIComponent(payload)
+    return value.slice(0, TEXT_DATA_URL_MAX_CHARS)
+  } catch {
+    return metadata.split(";").includes("base64") ? null : payload.slice(0, TEXT_DATA_URL_MAX_CHARS)
+  }
+}
+
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
@@ -210,7 +227,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          const inlineText = part.mime.startsWith("text/") ? textDataUrl(part.url) : undefined
+          if (inlineText !== undefined) {
+            userMessage.parts.push({
+              type: "text",
+              text:
+                inlineText === null
+                  ? `[Skipped malformed ${part.mime} attachment: ${part.filename ?? "file"}]`
+                  : `[Attached ${part.mime}: ${part.filename ?? "file"}]\n${inlineText}`,
+            })
+          } else if (options?.stripMedia && isMedia(part.mime)) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,

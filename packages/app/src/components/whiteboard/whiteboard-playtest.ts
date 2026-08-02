@@ -18,6 +18,9 @@ export type WhiteboardPlaytestChoice = {
 }
 
 export const WHITEBOARD_PLAYTEST_MAX_STEPS = 40
+export const WHITEBOARD_PLAYTEST_NOTE_MAX_LENGTH = 300
+export const WHITEBOARD_PLAYTEST_ISSUES = ["guidance", "feedback", "soft-lock", "pacing", "branch"] as const
+export type WhiteboardPlaytestIssue = (typeof WHITEBOARD_PLAYTEST_ISSUES)[number]
 
 export function whiteboardPlaytestStarts(graph: WhiteboardSceneSummary) {
   const incoming = new Set(graph.connections.map((connection) => connection.to))
@@ -98,8 +101,43 @@ export function formatWhiteboardPlaytestTrace(
       `${chinese ? "重复经过 / 循环" : "Revisited / cycle"}: ${[...new Set(repeated.map((step) => step.ref))].join(", ")}`,
     )
   if (path.length >= WHITEBOARD_PLAYTEST_MAX_STEPS)
-    lines.push(chinese ? `轨迹已达到 ${WHITEBOARD_PLAYTEST_MAX_STEPS} 步安全上限。` : `Trace reached the ${WHITEBOARD_PLAYTEST_MAX_STEPS}-step safety limit.`)
+    lines.push(
+      chinese
+        ? `轨迹已达到 ${WHITEBOARD_PLAYTEST_MAX_STEPS} 步安全上限。`
+        : `Trace reached the ${WHITEBOARD_PLAYTEST_MAX_STEPS}-step safety limit.`,
+    )
   return lines.join("\n")
+}
+
+export function whiteboardPlaytestImprovement(
+  graph: WhiteboardSceneSummary,
+  path: readonly WhiteboardPlaytestStep[],
+  issue: WhiteboardPlaytestIssue,
+  note: string,
+  chinese: boolean,
+) {
+  const trace = formatWhiteboardPlaytestTrace(graph, path, chinese)
+  if (!trace) return undefined
+  const labels: Record<WhiteboardPlaytestIssue, { zh: string; en: string }> = {
+    guidance: { zh: "引导不清", en: "unclear guidance" },
+    feedback: { zh: "反馈不足", en: "insufficient feedback" },
+    "soft-lock": { zh: "卡住或软锁", en: "stuck state or soft lock" },
+    pacing: { zh: "节奏问题", en: "pacing issue" },
+    branch: { zh: "分支缺少意义", en: "weak or meaningless branch" },
+  }
+  const detail = note.trim().replace(/\s+/g, " ").slice(0, WHITEBOARD_PLAYTEST_NOTE_MAX_LENGTH)
+  const label = chinese ? labels[issue].zh : labels[issue].en
+  return {
+    request: chinese
+      ? `根据刚才的实际试玩优化当前白板：${label}。${detail ? `策划备注：${detail}` : "修复这个问题，并保持未涉及的流程不变。"}`
+      : `Improve the current board from the playtest just performed: ${label}. ${detail ? `Designer note: ${detail}` : "Fix this issue while preserving unaffected flow."}`,
+    context: [
+      chinese
+        ? `本次白板修改由策划的实际流程试玩触发。已标记问题：${label}${detail ? `；策划备注：${detail}` : ""}。请优先修复实际经过的路径，并检查相邻分支不会因此产生新问题。`
+        : `This board edit was triggered by the designer's actual flow playtest. Flagged issue: ${label}${detail ? `; designer note: ${detail}` : ""}. Prioritize the played route and verify that adjacent branches do not gain new problems.`,
+      trace,
+    ].join("\n\n"),
+  }
 }
 
 export function whiteboardPlaytestScenario(
