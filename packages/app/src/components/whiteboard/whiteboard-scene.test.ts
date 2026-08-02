@@ -57,6 +57,46 @@ describe("structured whiteboard context", () => {
     expect(context).toContain("孤立节点: N1")
   })
 
+  test("preserves validated game-design roles from AI-generated nodes", () => {
+    const scene = [
+      element({
+        id: "start",
+        type: "ellipse",
+        customData: { kmAgentWhiteboard: { version: 1, nodeType: "start" } },
+      }),
+      element({ id: "start-label", type: "text", text: "进入竞技场", containerId: "start" }),
+      element({
+        id: "reward",
+        type: "rectangle",
+        x: 300,
+        customData: { kmAgentWhiteboard: { version: 1, nodeType: "reward" } },
+      }),
+      element({ id: "reward-label", type: "text", text: "获得钥匙", containerId: "reward" }),
+      element({
+        id: "flow",
+        type: "arrow",
+        startBinding: { elementId: "start" },
+        endBinding: { elementId: "reward" },
+      }),
+      element({
+        id: "invalid",
+        type: "diamond",
+        x: 600,
+        customData: { kmAgentWhiteboard: { version: 2, nodeType: "failure" } },
+      }),
+    ]
+
+    expect(summarizeWhiteboardScene(scene).nodes).toEqual([
+      { ref: "N1", type: "start", label: "进入竞技场" },
+      { ref: "N2", type: "reward", label: "获得钥匙" },
+      { ref: "N3", type: "diamond", label: "" },
+    ])
+    const context = formatWhiteboardScene(scene, true)
+    expect(context).toContain("N1 [起点] 进入竞技场")
+    expect(context).toContain("N2 [奖励] 获得钥匙")
+    expect(context).toContain("N3 [菱形] 未命名")
+  })
+
   test("separates AI-managed flow structure from designer visual materials", () => {
     const scene = [
       element({ id: "node", type: "rectangle" }),

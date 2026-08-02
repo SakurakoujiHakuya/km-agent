@@ -1,6 +1,11 @@
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform"
+import {
+  whiteboardNodeCustomData,
+  WHITEBOARD_SEMANTIC_NODE_TYPES,
+  type WhiteboardSemanticNodeType,
+} from "./whiteboard-scene"
 
-export type WhiteboardProposalNodeType = "start" | "step" | "decision" | "mechanic" | "reward" | "failure" | "end"
+export type WhiteboardProposalNodeType = WhiteboardSemanticNodeType
 
 export type WhiteboardProposal = {
   format: "km-agent-whiteboard"
@@ -27,7 +32,7 @@ export type WhiteboardLiveDraft = {
   eventCount: number
 }
 
-const nodeTypes: WhiteboardProposalNodeType[] = ["start", "step", "decision", "mechanic", "reward", "failure", "end"]
+const nodeTypes: readonly WhiteboardProposalNodeType[] = WHITEBOARD_SEMANTIC_NODE_TYPES
 const idPattern = /^[a-zA-Z0-9_-]{1,48}$/
 const maxSourceLength = 100_000
 const maxNodes = 36
@@ -64,9 +69,7 @@ export function parseWhiteboardLiveDraft(source: string | undefined): Whiteboard
   if (nodeEvents.length === 0) return undefined
   const connectionEvents = events.filter((event) => event.op === "connection")
   const noteEvents = events.filter((event) => event.op === "note")
-  const nodeIds = new Set(
-    nodeEvents.flatMap((event) => (typeof event.id === "string" ? [event.id] : [])),
-  )
+  const nodeIds = new Set(nodeEvents.flatMap((event) => (typeof event.id === "string" ? [event.id] : [])))
   const connected = connectionEvents.filter(
     (event) =>
       typeof event.from === "string" &&
@@ -149,6 +152,7 @@ export function whiteboardProposalElements(proposal: WhiteboardProposal): Excali
       roughness: 1,
       roundness: node.type === "decision" || node.type === "start" || node.type === "end" ? null : { type: 3 },
       strokeWidth: 2,
+      customData: whiteboardNodeCustomData(node.type),
     }
   })
   const connections = proposal.connections.map((connection, index): ExcalidrawElementSkeleton => {

@@ -51,6 +51,27 @@ describe("whiteboard flow playtest", () => {
     ).toEqual(["N1"])
   })
 
+  test("prefers the semantic start even when a retry loop points back to it", () => {
+    const semantic = {
+      nodes: [
+        { ref: "N1", type: "mechanic", label: "Charge" },
+        { ref: "N2", type: "start", label: "Enter" },
+        { ref: "N3", type: "failure", label: "Retry" },
+      ],
+      connections: [
+        { from: "N2", to: "N1" },
+        { from: "N1", to: "N3" },
+        { from: "N3", to: "N2", label: "Again" },
+      ],
+      notes: [],
+    } satisfies WhiteboardSceneSummary
+
+    expect(whiteboardPlaytestStarts(semantic)).toEqual(["N2"])
+    expect(formatWhiteboardPlaytestTrace(semantic, [{ ref: "N2" }, { ref: "N1", via: 0 }], true)).toContain(
+      "N2 [起点] Enter --[继续]--> N1 [核心操作] Charge",
+    )
+  })
+
   test("ignores invalid transitions and enforces a bounded trace", () => {
     const start = [{ ref: "N1" }]
     expect(advanceWhiteboardPlaytest(graph, start, 99)).toBe(start)

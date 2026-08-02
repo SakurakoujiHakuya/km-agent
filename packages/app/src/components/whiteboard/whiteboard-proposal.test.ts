@@ -128,6 +128,12 @@ describe("AI whiteboard proposal", () => {
     expect(elements[0]).toMatchObject({ id: "ai-proposal-title", type: "text", text: "Laser vault" })
     expect(elements.find((element) => element.id === "ai-node-switch")?.type).toBe("diamond")
     expect(elements.find((element) => element.id === "ai-node-start")?.type).toBe("ellipse")
+    expect(elements.find((element) => element.id === "ai-node-switch")?.customData).toEqual({
+      kmAgentWhiteboard: { version: 1, nodeType: "decision" },
+    })
+    expect(elements.find((element) => element.id === "ai-node-reward")?.customData).toEqual({
+      kmAgentWhiteboard: { version: 1, nodeType: "reward" },
+    })
     expect(elements.find((element) => element.id === "ai-edge-2")).toMatchObject({
       type: "arrow",
       start: { id: "ai-node-switch" },

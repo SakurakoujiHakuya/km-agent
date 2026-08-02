@@ -11,7 +11,19 @@ export type WhiteboardSceneElement = {
   groupIds?: readonly string[]
   startBinding?: { elementId: string } | null
   endBinding?: { elementId: string } | null
+  customData?: Record<string, unknown>
 }
+
+export const WHITEBOARD_SEMANTIC_NODE_TYPES = [
+  "start",
+  "step",
+  "decision",
+  "mechanic",
+  "reward",
+  "failure",
+  "end",
+] as const
+export type WhiteboardSemanticNodeType = (typeof WHITEBOARD_SEMANTIC_NODE_TYPES)[number]
 
 export type WhiteboardSceneScope = "all" | "selection"
 
@@ -42,6 +54,42 @@ const connectionLimit = 64
 const noteLimit = 24
 const textLimit = 180
 const outputLimit = 6000
+export function whiteboardSemanticNodeType(value: unknown): WhiteboardSemanticNodeType | undefined {
+  return WHITEBOARD_SEMANTIC_NODE_TYPES.find((type) => type === value)
+}
+
+export function whiteboardNodeCustomData(nodeType: WhiteboardSemanticNodeType) {
+  return { kmAgentWhiteboard: { version: 1, nodeType } }
+}
+
+export function whiteboardSceneNodeTypeLabel(type: string, chinese: boolean) {
+  const labels: Record<string, string> = chinese
+    ? {
+        rectangle: "矩形",
+        diamond: "菱形",
+        ellipse: "椭圆",
+        start: "起点",
+        step: "流程",
+        decision: "判定",
+        mechanic: "核心操作",
+        reward: "奖励",
+        failure: "失败",
+        end: "终点",
+      }
+    : {
+        rectangle: "rectangle",
+        diamond: "diamond",
+        ellipse: "ellipse",
+        start: "start",
+        step: "step",
+        decision: "decision",
+        mechanic: "core action",
+        reward: "reward",
+        failure: "failure",
+        end: "end",
+      }
+  return labels[type] ?? type
+}
 
 function cleanText(value: string) {
   return value.replaceAll(/\s+/g, " ").trim().slice(0, textLimit)
@@ -139,7 +187,7 @@ export function summarizeWhiteboardScene(elements: readonly WhiteboardSceneEleme
 
   const nodes = shapes.map((element, index) => ({
     ref: `N${index + 1}`,
-    type: element.type,
+    type: whiteboardElementSemanticNodeType(element) ?? element.type,
     label: labels.get(element.id) || "",
   }))
   const connections = visible
@@ -211,9 +259,6 @@ export function formatWhiteboardScene(
   const diagnostics = inspectWhiteboardScene(elements)
   if (summary.nodes.length === 0 && summary.connections.length === 0 && summary.notes.length === 0) return ""
 
-  const types = chinese
-    ? { rectangle: "矩形", diamond: "菱形", ellipse: "椭圆" }
-    : { rectangle: "rectangle", diamond: "diamond", ellipse: "ellipse" }
   const lines = [
     scope === "selection"
       ? chinese
@@ -226,14 +271,7 @@ export function formatWhiteboardScene(
   if (summary.nodes.length > 0) {
     lines.push(chinese ? "节点：" : "Nodes:")
     for (const node of summary.nodes) {
-      const type =
-        node.type === "rectangle"
-          ? types.rectangle
-          : node.type === "diamond"
-            ? types.diamond
-            : node.type === "ellipse"
-              ? types.ellipse
-              : node.type
+      const type = whiteboardSceneNodeTypeLabel(node.type, chinese)
       const label = node.label || (chinese ? "未命名" : "Unlabeled")
       lines.push(`- ${node.ref} [${type}] ${label}`)
     }
@@ -273,4 +311,12 @@ export function formatWhiteboardScene(
   const output = lines.join("\n")
   if (output.length <= outputLimit) return output
   return `${output.slice(0, outputLimit - 2)}\n…`
+}
+
+function whiteboardElementSemanticNodeType(element: WhiteboardSceneElement) {
+  const metadata = element.customData?.kmAgentWhiteboard
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined
+  const fields = Object.fromEntries(Object.entries(metadata))
+  if (fields.version !== 1) return undefined
+  return whiteboardSemanticNodeType(fields.nodeType)
 }

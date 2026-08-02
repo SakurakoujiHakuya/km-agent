@@ -1,4 +1,8 @@
-import type { WhiteboardSceneSummary } from "./whiteboard-scene"
+import {
+  whiteboardSceneNodeTypeLabel,
+  whiteboardSemanticNodeType,
+  type WhiteboardSceneSummary,
+} from "./whiteboard-scene"
 import {
   PREVIEW_PLAYTEST_SCENARIO_DETAIL_MAX_LENGTH,
   PREVIEW_PLAYTEST_SCENARIO_NAME_MAX_LENGTH,
@@ -23,6 +27,8 @@ export const WHITEBOARD_PLAYTEST_ISSUES = ["guidance", "feedback", "soft-lock", 
 export type WhiteboardPlaytestIssue = (typeof WHITEBOARD_PLAYTEST_ISSUES)[number]
 
 export function whiteboardPlaytestStarts(graph: WhiteboardSceneSummary) {
+  const explicit = graph.nodes.filter((node) => node.type === "start").map((node) => node.ref)
+  if (explicit.length > 0) return explicit
   const incoming = new Set(graph.connections.map((connection) => connection.to))
   const outgoing = new Set(graph.connections.map((connection) => connection.from))
   const starts = graph.nodes.filter((node) => !incoming.has(node.ref) && outgoing.has(node.ref)).map((node) => node.ref)
@@ -72,23 +78,28 @@ export function formatWhiteboardPlaytestTrace(
   const start = path[0]
   if (!start) return ""
   const nodeLabel = (ref: string) => nodes.get(ref)?.label || ref
+  const nodeDescription = (ref: string) => {
+    const node = nodes.get(ref)
+    const role = whiteboardSemanticNodeType(node?.type)
+    return `${ref}${role ? ` [${whiteboardSceneNodeTypeLabel(role, chinese)}]` : ""} ${nodeLabel(ref)}`
+  }
   const lines = [
     chinese
       ? "白板流程试玩轨迹（策划在 KM Agent 中实际点击，请据此复现和评审）："
       : "Whiteboard flow playtest trace (clicked by the designer in KM Agent; use it to reproduce and review the flow):",
-    `- ${chinese ? "起点" : "Start"}: ${start.ref} ${nodeLabel(start.ref)}`,
+    `- ${chinese ? "起点" : "Start"}: ${nodeDescription(start.ref)}`,
     ...path.slice(1).map((step, index) => {
       const previous = path[index]
       const connection = step.via === undefined ? undefined : graph.connections[step.via]
       const transition = connection?.label || (chinese ? "继续" : "Continue")
-      return `- ${index + 1}. ${previous?.ref ?? "?"} ${nodeLabel(previous?.ref ?? "?")} --[${transition}]--> ${step.ref} ${nodeLabel(step.ref)}`
+      return `- ${index + 1}. ${nodeDescription(previous?.ref ?? "?")} --[${transition}]--> ${nodeDescription(step.ref)}`
     }),
   ]
   const choices = whiteboardPlaytestChoices(graph, path)
   const repeated = path.filter((step, index) => path.findIndex((candidate) => candidate.ref === step.ref) !== index)
   if (choices.length === 0) {
     lines.push(
-      `${chinese ? "试玩结果" : "Result"}: ${chinese ? "到达无后继连接的终点" : "Reached an endpoint with no outgoing link"} (${path.at(-1)?.ref} ${nodeLabel(path.at(-1)?.ref ?? "")})`,
+      `${chinese ? "试玩结果" : "Result"}: ${chinese ? "到达无后继连接的终点" : "Reached an endpoint with no outgoing link"} (${nodeDescription(path.at(-1)?.ref ?? "")})`,
     )
   }
   if (choices.length > 0) {

@@ -2,7 +2,11 @@ import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import type { WhiteboardSceneSummary } from "./whiteboard-scene"
+import {
+  whiteboardSceneNodeTypeLabel,
+  whiteboardSemanticNodeType,
+  type WhiteboardSceneSummary,
+} from "./whiteboard-scene"
 import {
   WHITEBOARD_PLAYTEST_ISSUES,
   WHITEBOARD_PLAYTEST_MAX_STEPS,
@@ -92,6 +96,7 @@ export function WhiteboardPlaytestPanel(props: {
   )
   const nodes = createMemo(() => new Map(props.graph.nodes.map((node) => [node.ref, node])))
   const current = createMemo(() => nodes().get(props.path.at(-1)?.ref ?? ""))
+  const currentRole = createMemo(() => whiteboardSemanticNodeType(current()?.type))
   const choices = createMemo(() => whiteboardPlaytestChoices(props.graph, props.path))
   const starts = createMemo(() => whiteboardPlaytestStarts(props.graph))
   const repeated = createMemo(() => {
@@ -143,6 +148,16 @@ export function WhiteboardPlaytestPanel(props: {
             <span>{copy().current}</span>
             <span>·</span>
             <span>{current()?.ref}</span>
+            <Show when={currentRole()} keyed>
+              {(role) => (
+                <span
+                  data-component="whiteboard-playtest-node-role"
+                  class="rounded-full bg-v2-background-bg-base px-2 py-0.5 text-v2-text-text-base"
+                >
+                  {whiteboardSceneNodeTypeLabel(role, props.chinese)}
+                </span>
+              )}
+            </Show>
             <Show when={repeated()}>
               <span class="rounded-full bg-v2-background-bg-base px-2 py-0.5">Loop</span>
             </Show>
