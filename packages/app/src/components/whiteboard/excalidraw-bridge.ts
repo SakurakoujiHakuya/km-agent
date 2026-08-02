@@ -1,9 +1,4 @@
-import type {
-  AppState,
-  BinaryFiles,
-  ExcalidrawImperativeAPI,
-  ExcalidrawInitialDataState,
-} from "@excalidraw/excalidraw/types"
+import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types"
 import type { OrderedExcalidrawElement } from "@excalidraw/excalidraw/element/types"
 import type { ExcalidrawElementSkeleton } from "@excalidraw/excalidraw/data/transform"
 import {
@@ -20,6 +15,7 @@ import {
 type WhiteboardScene = {
   elements: readonly OrderedExcalidrawElement[]
   files: BinaryFiles
+  fitToContent?: boolean
   appState: Pick<
     AppState,
     "gridModeEnabled" | "gridSize" | "gridStep" | "scrollX" | "scrollY" | "viewBackgroundColor" | "zoom"
@@ -29,6 +25,12 @@ type WhiteboardScene = {
 export type WhiteboardDecorationSnapshot = {
   elements: readonly OrderedExcalidrawElement[]
   files: BinaryFiles
+  appState: WhiteboardScene["appState"]
+}
+
+export type WhiteboardStoredSceneSnapshot = {
+  summary: WhiteboardSceneSummary
+  decorations: WhiteboardDecorationSnapshot
 }
 
 export type WhiteboardHandle = {
@@ -46,6 +48,11 @@ export type WhiteboardHandle = {
   replaceStructureWith: (elements: ExcalidrawElementSkeleton[], decorations?: WhiteboardDecorationSnapshot) => void
   snapshotDecorations: () => WhiteboardDecorationSnapshot
   switchScene: (storageKey: string) => void
+  writeStructureScene: (
+    storageKey: string,
+    elements: ExcalidrawElementSkeleton[],
+    decorations: WhiteboardDecorationSnapshot,
+  ) => void
 }
 
 export async function mountExcalidrawWhiteboard(
@@ -103,10 +110,15 @@ export async function mountExcalidrawWhiteboard(
     saveTimer = window.setTimeout(save, 350)
   }
 
-  const snapshotDecorations = (): WhiteboardDecorationSnapshot => ({
-    elements: whiteboardSceneDecorations(api?.getSceneElements() ?? []),
-    files: api?.getFiles() ?? {},
-  })
+  const snapshotDecorations = (): WhiteboardDecorationSnapshot => {
+    const appState = api?.getAppState()
+    if (!appState) throw new Error("Whiteboard is not ready")
+    return {
+      elements: whiteboardSceneDecorations(api?.getSceneElements() ?? []),
+      files: api?.getFiles() ?? {},
+      appState: whiteboardSceneAppState(appState),
+    }
+  }
 
   const replaceElements = (skeletons: ExcalidrawElementSkeleton[], decorations?: WhiteboardDecorationSnapshot) => {
     if (!api) return
@@ -180,7 +192,7 @@ export async function mountExcalidrawWhiteboard(
       })
       updateSelectionCount(api.getSceneElements(), api.getAppState())
       if (!scene?.elements?.length) return
-      if (hasWhiteboardViewport(scene.appState)) return
+      if (!scene.fitToContent && hasWhiteboardViewport(scene.appState)) return
       window.requestAnimationFrame(() =>
         api?.scrollToContent(scene.elements ?? [], {
           fitToViewport: true,
@@ -189,6 +201,16 @@ export async function mountExcalidrawWhiteboard(
           animate: true,
         }),
       )
+    },
+    writeStructureScene: (storageKey, skeletons, decorations) => {
+      const generated = ExcalidrawLibrary.convertToExcalidrawElements(skeletons, { regenerateIds: false })
+      writeScene(storageKey, {
+        elements: [...decorations.elements, ...generated],
+        files: decorations.files,
+        appState: decorations.appState,
+        fitToContent: true,
+      })
+      options.onSaved()
     },
     exportPng: async (scope = "all") => {
       if (!api) throw new Error("Whiteboard is not ready")
@@ -257,21 +279,41 @@ export async function mountExcalidrawWhiteboard(
   )
 }
 
-function readScene(storageKey: string): ExcalidrawInitialDataState | null {
+export function readWhiteboardSceneSnapshot(storageKey: string): WhiteboardStoredSceneSnapshot | undefined {
+  const scene = readScene(storageKey)
+  if (!scene) return undefined
+  return {
+    summary: summarizeWhiteboardScene(scene.elements),
+    decorations: {
+      elements: whiteboardSceneDecorations(scene.elements),
+      files: scene.files,
+      appState: scene.appState,
+    },
+  }
+}
+
+function readScene(storageKey: string): (WhiteboardScene & { scrollToContent: boolean }) | null {
   if (typeof localStorage !== "object") return null
   try {
     const value = localStorage.getItem(storageKey)
     if (!value) return null
     const scene: unknown = JSON.parse(value)
     if (!isWhiteboardScene(scene)) return null
-    return {
-      elements: scene.elements,
-      files: scene.files,
-      appState: scene.appState,
-      scrollToContent: !hasWhiteboardViewport(scene.appState),
-    }
+    return { ...scene, scrollToContent: !!scene.fitToContent || !hasWhiteboardViewport(scene.appState) }
   } catch {
     return null
+  }
+}
+
+function whiteboardSceneAppState(appState: AppState): WhiteboardScene["appState"] {
+  return {
+    gridModeEnabled: appState.gridModeEnabled,
+    gridSize: appState.gridSize,
+    gridStep: appState.gridStep,
+    scrollX: appState.scrollX,
+    scrollY: appState.scrollY,
+    viewBackgroundColor: appState.viewBackgroundColor,
+    zoom: appState.zoom,
   }
 }
 

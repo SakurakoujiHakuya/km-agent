@@ -10,6 +10,7 @@ import {
   whiteboardChatDisplayText,
   whiteboardChatEditableProposal,
   whiteboardChatPrompt,
+  whiteboardChatRequestFinished,
   whiteboardChatTranscript,
   whiteboardChatTurnWorking,
 } from "./whiteboard-chat"
@@ -65,7 +66,7 @@ describe("whiteboard AI chat", () => {
     const transcript = whiteboardChatTranscript(messages, parts)
     expect(transcript).toHaveLength(2)
     expect(transcript[0]).toMatchObject({ id: "chat-user", role: "user", text: "Add a retry loop" })
-    expect(transcript[1]).toMatchObject({ id: "chat-assistant", role: "assistant" })
+    expect(transcript[1]).toMatchObject({ id: "chat-assistant", role: "assistant", requestID: "chat-user" })
     expect(transcript[1]?.proposal?.title).toBe("Retry")
     expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Done.")
   })
@@ -91,6 +92,7 @@ describe("whiteboard AI chat", () => {
     )
 
     expect(transcript[1]?.draft?.proposal.nodes).toHaveLength(2)
+    expect(transcript[1]?.requestID).toBe("chat-user")
     expect(transcript[1]?.draft?.complete).toBeFalse()
     expect(transcript[1]?.proposal).toBeUndefined()
     expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Building the branch.")
@@ -169,6 +171,27 @@ describe("whiteboard AI chat", () => {
       }),
     ).toBeFalse()
     expect(whiteboardChatBuildable({ id: "text", role: "assistant", text: "Looks good" })).toBeFalse()
+  })
+
+  test("keeps a streamed request pending until it completes or stops", () => {
+    const proposal = {
+      format: "km-agent-whiteboard" as const,
+      version: 1 as const,
+      title: "Partial",
+      nodes: [{ id: "start", type: "start" as const, label: "Start", column: 0, row: 0 }],
+      connections: [],
+      notes: [],
+    }
+    const partial = {
+      id: "partial",
+      role: "assistant" as const,
+      text: "",
+      draft: { complete: false, eventCount: 1, proposal },
+    }
+    expect(whiteboardChatRequestFinished(partial, true)).toBeFalse()
+    expect(whiteboardChatRequestFinished(partial, false)).toBeTrue()
+    expect(whiteboardChatRequestFinished({ ...partial, draft: { ...partial.draft, complete: true } }, true)).toBeTrue()
+    expect(whiteboardChatRequestFinished({ id: "text", role: "assistant", text: "Done" }, false)).toBeFalse()
   })
 
   test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {

@@ -4,13 +4,16 @@ import {
   addWhiteboardBoard,
   defaultWhiteboardWorkspace,
   linkWhiteboardChatMessage,
+  linkWhiteboardChatRequest,
   parseWhiteboardWorkspace,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
   WHITEBOARD_BOARD_MAX_COUNT,
   whiteboardBoardStorageKey,
   whiteboardChatVersions,
+  whiteboardChatRequestTargets,
   whiteboardWorkspaceStorageKey,
+  unlinkWhiteboardChatRequest,
 } from "./whiteboard-workspace"
 
 describe("multi-board whiteboard workspace", () => {
@@ -82,6 +85,36 @@ describe("multi-board whiteboard workspace", () => {
     expect(whiteboardChatVersions(removeWhiteboardBoard(relinked, "draft"))).toEqual({
       msg_old: { boardID: "main", boardName: "Main" },
     })
+  })
+
+  test("persists each pending AI request on exactly one source board", () => {
+    const parsed = parseWhiteboardWorkspace(
+      JSON.stringify({
+        version: 1,
+        active: "draft",
+        boards: [
+          { id: "main", name: "Main", chatRequestIDs: ["msg_main", "msg_shared", "bad id"] },
+          { id: "draft", name: "Draft", chatRequestIDs: ["msg_shared", "msg_draft", 42] },
+        ],
+      }),
+      false,
+    )
+    expect(parsed.boards).toEqual([
+      { id: "main", name: "Main", chatRequestIDs: ["msg_main", "msg_shared"] },
+      { id: "draft", name: "Draft", chatRequestIDs: ["msg_draft"] },
+    ])
+    expect(whiteboardChatRequestTargets(parsed)).toEqual({
+      msg_main: "main",
+      msg_shared: "main",
+      msg_draft: "draft",
+    })
+
+    const moved = linkWhiteboardChatRequest(parsed, "draft", "msg_shared")
+    expect(whiteboardChatRequestTargets(moved).msg_shared).toBe("draft")
+    const resolved = unlinkWhiteboardChatRequest(moved, "msg_shared")
+    expect(whiteboardChatRequestTargets(resolved).msg_shared).toBeUndefined()
+    expect(unlinkWhiteboardChatRequest(resolved, "missing")).toBe(resolved)
+    expect(whiteboardChatRequestTargets(removeWhiteboardBoard(resolved, "draft"))).toEqual({ msg_main: "main" })
   })
 
   test("sanitizes revision sources and reparents descendants when a source version is removed", () => {

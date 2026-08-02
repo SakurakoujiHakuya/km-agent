@@ -17,11 +17,13 @@ export type WhiteboardChatMessage = {
   id: string
   role: "user" | "assistant"
   text: string
+  requestID?: string
   draft?: WhiteboardLiveDraft
   proposal?: WhiteboardProposal
 }
 
 export type WhiteboardChatSendInput = {
+  messageID: string
   request: string
   boardName: string
   sceneContext: string
@@ -91,7 +93,7 @@ export function whiteboardChatTranscript(
     Record<string, readonly { type: string; text?: string; filename?: string; synthetic?: boolean }[] | undefined>
   >,
 ) {
-  return messages.reduce<{ active: boolean; items: WhiteboardChatMessage[] }>(
+  return messages.reduce<{ activeRequestID?: string; items: WhiteboardChatMessage[] }>(
     (result, message) => {
       const text = (parts[message.id] ?? [])
         .filter((part) => part.type === "text" && !!part.text && !part.synthetic)
@@ -108,30 +110,31 @@ export function whiteboardChatTranscript(
               (part) => part.type === "text" && part.synthetic && part.text?.includes(WHITEBOARD_CHAT_CONTEXT_MARKER),
             ),
         )
-        if (!request) return { ...result, active: false }
+        if (!request) return { ...result, activeRequestID: undefined }
         return {
-          active: true,
+          activeRequestID: message.id,
           items: [...result.items, { id: message.id, role: "user", text: request }],
         }
       }
 
-      if (message.role !== "assistant" || !result.active || !text.trim()) return result
+      if (message.role !== "assistant" || !result.activeRequestID || !text.trim()) return result
       const draft = parseWhiteboardLiveDraft(text)
       return {
-        active: false,
+        activeRequestID: undefined,
         items: [
           ...result.items,
           {
             id: message.id,
             role: "assistant",
             text: text.trim(),
+            requestID: result.activeRequestID,
             draft,
             proposal: draft?.complete ? draft.proposal : parseWhiteboardProposal(text),
           },
         ],
       }
     },
-    { active: false, items: [] },
+    { activeRequestID: undefined, items: [] },
   ).items
 }
 
@@ -152,6 +155,10 @@ export function whiteboardChatEditableProposal(message: WhiteboardChatMessage) {
 
 export function whiteboardChatBuildable(message: WhiteboardChatMessage) {
   return !!message.proposal || message.draft?.complete === true
+}
+
+export function whiteboardChatRequestFinished(message: WhiteboardChatMessage, working: boolean) {
+  return !!message.proposal || message.draft?.complete === true || (!!message.draft && !working)
 }
 
 export function whiteboardChatActiveDraftID(messages: readonly WhiteboardChatMessage[], working: boolean) {

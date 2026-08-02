@@ -1,11 +1,13 @@
 export const WHITEBOARD_BOARD_MAX_COUNT = 12
 export const WHITEBOARD_BOARD_NAME_MAX_LENGTH = 48
 export const WHITEBOARD_BOARD_CHAT_MESSAGE_MAX_COUNT = 32
+export const WHITEBOARD_BOARD_CHAT_REQUEST_MAX_COUNT = 32
 
 export type WhiteboardBoard = {
   id: string
   name: string
   chatMessageIDs?: string[]
+  chatRequestIDs?: string[]
   sourceBoardID?: string
 }
 
@@ -41,6 +43,7 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
     if (fields.version !== 1 || !Array.isArray(fields.boards)) return fallback
     const seen = new Set<string>()
     const seenChatMessages = new Set<string>()
+    const seenChatRequests = new Set<string>()
     const boards = fields.boards
       .flatMap((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return []
@@ -57,11 +60,22 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
                 return true
               })
           : []
+        const chatRequestIDs = Array.isArray(board.chatRequestIDs)
+          ? board.chatRequestIDs
+              .filter((messageID): messageID is string => whiteboardChatMessageID(messageID))
+              .slice(-WHITEBOARD_BOARD_CHAT_REQUEST_MAX_COUNT)
+              .filter((messageID) => {
+                if (seenChatRequests.has(messageID)) return false
+                seenChatRequests.add(messageID)
+                return true
+              })
+          : []
         return [
           {
             id: board.id,
             name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board"),
             ...(chatMessageIDs.length > 0 ? { chatMessageIDs } : {}),
+            ...(chatRequestIDs.length > 0 ? { chatRequestIDs } : {}),
             ...(typeof board.sourceBoardID === "string" && boardId.test(board.sourceBoardID)
               ? { sourceBoardID: board.sourceBoardID }
               : {}),
@@ -136,6 +150,40 @@ export function linkWhiteboardChatMessage(
       return next.length > 0 ? { ...linked, chatMessageIDs: next } : linked
     }),
   }
+}
+
+export function linkWhiteboardChatRequest(workspace: WhiteboardWorkspace, id: string, requestID: string) {
+  if (!workspace.boards.some((board) => board.id === id) || !whiteboardChatMessageID(requestID)) return workspace
+  if (whiteboardChatRequestTargets(workspace)[requestID] === id) return workspace
+  return {
+    ...workspace,
+    boards: workspace.boards.map((board) => {
+      const requests = (board.chatRequestIDs ?? []).filter((value) => value !== requestID)
+      if (board.id === id) requests.push(requestID)
+      const next = requests.slice(-WHITEBOARD_BOARD_CHAT_REQUEST_MAX_COUNT)
+      const { chatRequestIDs: _, ...rest } = board
+      return next.length > 0 ? { ...rest, chatRequestIDs: next } : rest
+    }),
+  }
+}
+
+export function unlinkWhiteboardChatRequest(workspace: WhiteboardWorkspace, requestID: string) {
+  if (!whiteboardChatRequestTargets(workspace)[requestID]) return workspace
+  return {
+    ...workspace,
+    boards: workspace.boards.map((board) => {
+      const requests = (board.chatRequestIDs ?? []).filter((value) => value !== requestID)
+      if (requests.length === (board.chatRequestIDs ?? []).length) return board
+      const { chatRequestIDs: _, ...rest } = board
+      return requests.length > 0 ? { ...rest, chatRequestIDs: requests } : rest
+    }),
+  }
+}
+
+export function whiteboardChatRequestTargets(workspace: WhiteboardWorkspace) {
+  const targets: Record<string, string> = {}
+  workspace.boards.forEach((board) => board.chatRequestIDs?.forEach((requestID) => (targets[requestID] = board.id)))
+  return targets
 }
 
 export function whiteboardChatVersions(workspace: WhiteboardWorkspace) {

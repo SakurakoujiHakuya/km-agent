@@ -4,6 +4,7 @@ import { useTheme } from "@opencode-ai/ui/theme/context"
 import { createEffect, createMemo, For, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
+import { Identifier } from "@/utils/id"
 import {
   parsePreviewPlaytestScenarios,
   PREVIEW_PLAYTEST_SCENARIOS_MAX_COUNT,
@@ -12,11 +13,13 @@ import {
 } from "../game-preview-scenarios"
 import {
   mountExcalidrawWhiteboard,
+  readWhiteboardSceneSnapshot,
   type WhiteboardDecorationSnapshot,
   type WhiteboardHandle,
 } from "./excalidraw-bridge"
 import {
   whiteboardChatBuildable,
+  whiteboardChatRequestFinished,
   type WhiteboardChatMessage,
   type WhiteboardChatSendInput,
   whiteboardChatEditableProposal,
@@ -36,7 +39,12 @@ import {
 import type { WhiteboardHandoffIntent } from "./whiteboard-prompt"
 import { parseWhiteboardProposal, whiteboardProposalElements } from "./whiteboard-proposal"
 import { reviewWhiteboardProposal, type WhiteboardProposalReview } from "./whiteboard-proposal-review"
-import { inspectWhiteboardScene, type WhiteboardSceneScope, type WhiteboardSceneSummary } from "./whiteboard-scene"
+import {
+  inspectWhiteboardScene,
+  summarizeWhiteboardScene,
+  type WhiteboardSceneScope,
+  type WhiteboardSceneSummary,
+} from "./whiteboard-scene"
 import {
   whiteboardTemplate,
   whiteboardTemplateNeedsConfirmation,
@@ -48,12 +56,15 @@ import {
   activateWhiteboardBoard,
   addWhiteboardBoard,
   linkWhiteboardChatMessage,
+  linkWhiteboardChatRequest,
   parseWhiteboardWorkspace,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
+  unlinkWhiteboardChatRequest,
   WHITEBOARD_BOARD_MAX_COUNT,
   whiteboardBoardStorageKey,
   whiteboardChatVersions,
+  whiteboardChatRequestTargets,
   whiteboardWorkspaceStorageKey,
 } from "./whiteboard-workspace"
 
@@ -156,6 +167,9 @@ export default function WhiteboardDialog(props: {
           chatUnavailable: "发送首条任务后即可在白板内与 AI 实时共创。",
           chatRevisionApplied: "AI 已生成新的可编辑白板版本，原版本保持不变。",
           chatLiveStarted: "AI 正在实时搭建新版本，原白板保持不变。",
+          chatLiveBackground: "AI 正在后台搭建来源白板的新版本，当前白板不会被切换。",
+          chatRevisionBackground: "AI 已在后台完成来源白板的新版本，当前白板保持不变。",
+          chatSourceMissing: "AI 请求的来源白板已被删除，未自动修改其他白板。",
           chatCurrentApplied: "AI 方案已替换当前白板，可使用撤销恢复。",
           chatVersionDiscarded: "AI 版本已丢弃，已返回来源白板。",
           playtest: "流程试玩",
@@ -226,6 +240,11 @@ export default function WhiteboardDialog(props: {
           chatUnavailable: "Send the first task to enable live AI co-editing inside the whiteboard.",
           chatRevisionApplied: "AI created a new editable board revision. The previous version is unchanged.",
           chatLiveStarted: "AI is building a live revision. The previous board remains unchanged.",
+          chatLiveBackground:
+            "AI is building the source board revision in the background. Your current board stays open.",
+          chatRevisionBackground:
+            "AI finished the source board revision in the background. Your current board is unchanged.",
+          chatSourceMissing: "The source board for this AI request was deleted. No other board was changed.",
           chatCurrentApplied: "AI replaced the current board. Use Undo to restore it.",
           chatVersionDiscarded: "AI revision discarded. Returned to its source board.",
           playtest: "Flow playtest",
@@ -271,6 +290,10 @@ export default function WhiteboardDialog(props: {
   let deleteBoardTimer: number | undefined
   let sceneSwitchFrame: number | undefined
   let mountedHandle: WhiteboardHandle | undefined
+  const chatRequestSnapshots = new Map<
+    string,
+    { boardID: string; baseline: WhiteboardSceneSummary; decorations: WhiteboardDecorationSnapshot }
+  >()
   let importInput: HTMLInputElement | undefined
   let pendingImport: File | undefined
   const activeBoard = createMemo(
@@ -282,6 +305,7 @@ export default function WhiteboardDialog(props: {
     return state.handle?.summarizeScene()
   })
   const chatVersions = createMemo(() => whiteboardChatVersions(state.workspace))
+  const chatRequestTargets = createMemo(() => whiteboardChatRequestTargets(state.workspace))
   const chatApplied = createMemo(() => Object.keys(chatVersions()))
   const structureStatus = createMemo(() => {
     const diagnostics = state.diagnostics
@@ -307,7 +331,7 @@ export default function WhiteboardDialog(props: {
         (item) =>
           item.role === "assistant" &&
           !!item.draft &&
-          !initialChatMessageIDs.has(item.id) &&
+          (!initialChatMessageIDs.has(item.id) || (!!item.requestID && !!chatRequestTargets()[item.requestID])) &&
           (!state.chatAutoAttempted.includes(item.id) || state.chatLiveMessage === item.id),
       )
     if (!message) return
@@ -322,7 +346,7 @@ export default function WhiteboardDialog(props: {
         (item) =>
           item.role === "assistant" &&
           !!item.proposal &&
-          !initialChatMessageIDs.has(item.id) &&
+          (!initialChatMessageIDs.has(item.id) || (!!item.requestID && !!chatRequestTargets()[item.requestID])) &&
           !state.chatAutoAttempted.includes(item.id),
       )
     if (!message) return
@@ -433,12 +457,16 @@ export default function WhiteboardDialog(props: {
     const value = whiteboardChatEditableProposal(message)
     const handle = mountedHandle
     if (!value || !handle || chatApplied().includes(message.id)) return false
-    if (!state.chatReviews[message.id]) {
-      setState("chatReviews", message.id, reviewWhiteboardProposal(handle.summarizeScene(), value))
-    }
     if (target === "current") {
+      if (!state.chatReviews[message.id]) {
+        setState("chatReviews", message.id, reviewWhiteboardProposal(handle.summarizeScene(), value))
+      }
       handle.replaceStructureWith(whiteboardProposalElements(value))
-      saveWorkspace(linkWhiteboardChatMessage(state.workspace, state.workspace.active, message.id))
+      const workspace = resolveChatRequest(
+        linkWhiteboardChatMessage(state.workspace, state.workspace.active, message.id),
+        message,
+      )
+      saveWorkspace(workspace)
       setState({
         pendingTemplate: undefined,
         playtest: undefined,
@@ -448,23 +476,49 @@ export default function WhiteboardDialog(props: {
       showNotice(copy().chatCurrentApplied)
       return true
     }
+    const source = chatSource(message)
+    if (!source) return chatSourceMissing(message)
+    if (!state.chatReviews[message.id]) {
+      setState("chatReviews", message.id, reviewWhiteboardProposal(source.baseline, value))
+    }
     if (state.workspace.boards.length >= WHITEBOARD_BOARD_MAX_COUNT) {
       setState("error", copy().boardLimit)
       return false
     }
-    const sourceBoardID = state.workspace.active
-    const decorations = handle.snapshotDecorations()
+    const currentBoardID = state.workspace.active
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
+    const revisionBoardID = added.active
     const partial = !!message.draft && !message.draft.complete && !message.proposal
     const name = partial ? `${chinese() ? "AI 草稿" : "AI draft"} · ${value.title}` : value.title
-    const workspace = linkWhiteboardChatMessage(
-      renameWhiteboardBoard(added, added.active, name),
-      added.active,
-      message.id,
-      sourceBoardID,
+    let workspace = resolveChatRequest(
+      linkWhiteboardChatMessage(
+        renameWhiteboardBoard(added, revisionBoardID, name),
+        revisionBoardID,
+        message.id,
+        source.boardID,
+      ),
+      message,
     )
-    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied, decorations)
+    if (currentBoardID === source.boardID) {
+      populateNewBoard(
+        handle,
+        workspace,
+        whiteboardProposalElements(value),
+        copy().chatRevisionApplied,
+        source.decorations,
+      )
+      return true
+    }
+
+    workspace = activateWhiteboardBoard(workspace, currentBoardID)
+    handle.writeStructureScene(
+      whiteboardBoardStorageKey(props.storageKey, revisionBoardID),
+      whiteboardProposalElements(value),
+      source.decorations,
+    )
+    saveWorkspace(workspace)
+    showNotice(copy().chatRevisionBackground)
     return true
   }
 
@@ -473,38 +527,59 @@ export default function WhiteboardDialog(props: {
     const handle = mountedHandle
     if (!draft || !handle) return false
     const signature = `${draft.complete}:${JSON.stringify(draft.proposal)}`
-    if (state.chatLiveMessage === message.id && state.chatLiveSignature === signature) return false
-
-    const existing = state.chatLiveMessage === message.id ? state.chatLiveBoard : ""
-    if (existing && state.workspace.active !== existing) {
-      setState({ chatLiveMessage: "", chatLiveBoard: "", chatLiveSignature: "" })
+    if (state.chatLiveMessage === message.id && state.chatLiveSignature === signature) {
+      const workspace = resolveChatRequest(state.workspace, message)
+      if (workspace !== state.workspace) saveWorkspace(workspace)
       return false
     }
-    const baseline = state.chatBaselines[message.id] ?? handle.summarizeScene()
+
+    const linkedVersion = chatVersions()[message.id]
+    const linkedBoard = state.chatLiveMessage === message.id ? state.chatLiveBoard : (linkedVersion?.boardID ?? "")
+    const existing = state.workspace.boards.some((board) => board.id === linkedBoard) ? linkedBoard : ""
+    const source = chatSource(message)
+    if (!source) return chatSourceMissing(message)
+    const baseline = state.chatBaselines[message.id] ?? source.baseline
     const review = reviewWhiteboardProposal(baseline, draft.proposal)
     if (existing) {
-      if (sceneSwitchFrame !== undefined) {
-        window.cancelAnimationFrame(sceneSwitchFrame)
-        sceneSwitchFrame = undefined
+      const active = state.workspace.active === existing
+      if (active) {
+        if (sceneSwitchFrame !== undefined) {
+          window.cancelAnimationFrame(sceneSwitchFrame)
+          sceneSwitchFrame = undefined
+        }
+        handle.replaceStructureWith(whiteboardProposalElements(draft.proposal))
+      } else {
+        const stored = readWhiteboardSceneSnapshot(whiteboardBoardStorageKey(props.storageKey, existing))
+        handle.writeStructureScene(
+          whiteboardBoardStorageKey(props.storageKey, existing),
+          whiteboardProposalElements(draft.proposal),
+          stored?.decorations ?? source.decorations,
+        )
       }
-      handle.replaceStructureWith(whiteboardProposalElements(draft.proposal))
       const name = draft.complete
         ? draft.proposal.title
         : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
-      const workspace = linkWhiteboardChatMessage(
-        renameWhiteboardBoard(state.workspace, existing, name),
-        existing,
-        message.id,
+      const workspace = resolveChatRequest(
+        linkWhiteboardChatMessage(
+          renameWhiteboardBoard(state.workspace, existing, name),
+          existing,
+          message.id,
+          source.boardID,
+        ),
+        message,
       )
       if (workspace !== state.workspace) saveWorkspace(workspace)
       setState({
+        chatLiveMessage: message.id,
+        chatLiveBoard: existing,
         chatLiveSignature: signature,
+        chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
         chatReviews: { ...state.chatReviews, [message.id]: review },
         chatAutoAttempted: draft.complete
           ? [...state.chatAutoAttempted.filter((id) => id !== message.id), message.id]
           : state.chatAutoAttempted,
       })
-      if (draft.complete) showNotice(copy().chatRevisionApplied)
+      if (draft.complete) showNotice(active ? copy().chatRevisionApplied : copy().chatRevisionBackground)
       return true
     }
     if (state.workspace.boards.length >= WHITEBOARD_BOARD_MAX_COUNT) {
@@ -514,28 +589,49 @@ export default function WhiteboardDialog(props: {
       })
       return false
     }
-    const sourceBoardID = state.workspace.active
-    const decorations = handle.snapshotDecorations()
+    const currentBoardID = state.workspace.active
     const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (added === state.workspace) return false
+    const revisionBoardID = added.active
     const name = draft.complete
       ? draft.proposal.title
       : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
-    const workspace = linkWhiteboardChatMessage(
-      renameWhiteboardBoard(added, added.active, name),
-      added.active,
-      message.id,
-      sourceBoardID,
+    let workspace = resolveChatRequest(
+      linkWhiteboardChatMessage(
+        renameWhiteboardBoard(added, revisionBoardID, name),
+        revisionBoardID,
+        message.id,
+        source.boardID,
+      ),
+      message,
     )
     setState({
       chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
       chatReviews: { ...state.chatReviews, [message.id]: review },
       chatLiveMessage: message.id,
-      chatLiveBoard: workspace.active,
+      chatLiveBoard: revisionBoardID,
       chatLiveSignature: signature,
       chatAutoAttempted: [...state.chatAutoAttempted, message.id],
     })
-    populateNewBoard(handle, workspace, whiteboardProposalElements(draft.proposal), copy().chatLiveStarted, decorations)
+    if (currentBoardID === source.boardID) {
+      populateNewBoard(
+        handle,
+        workspace,
+        whiteboardProposalElements(draft.proposal),
+        copy().chatLiveStarted,
+        source.decorations,
+      )
+      return true
+    }
+
+    workspace = activateWhiteboardBoard(workspace, currentBoardID)
+    handle.writeStructureScene(
+      whiteboardBoardStorageKey(props.storageKey, revisionBoardID),
+      whiteboardProposalElements(draft.proposal),
+      source.decorations,
+    )
+    saveWorkspace(workspace)
+    showNotice(draft.complete ? copy().chatRevisionBackground : copy().chatLiveBackground)
     return true
   }
 
@@ -577,6 +673,57 @@ export default function WhiteboardDialog(props: {
     })
   }
 
+  const chatSource = (message: WhiteboardChatMessage) => {
+    const handle = mountedHandle
+    if (!handle) return undefined
+    if (!message.requestID) {
+      return {
+        boardID: state.workspace.active,
+        baseline: handle.summarizeScene(),
+        decorations: handle.snapshotDecorations(),
+      }
+    }
+
+    const local = chatRequestSnapshots.get(message.requestID)
+    const version = chatVersions()[message.id]
+    const boardID = local?.boardID ?? chatRequestTargets()[message.requestID] ?? version?.sourceBoardID
+    if (!boardID || !state.workspace.boards.some((board) => board.id === boardID)) return undefined
+    if (local?.boardID === boardID) return local
+    if (state.workspace.active === boardID) {
+      return {
+        boardID,
+        baseline: handle.summarizeScene(),
+        decorations: handle.snapshotDecorations(),
+      }
+    }
+
+    const stored = readWhiteboardSceneSnapshot(whiteboardBoardStorageKey(props.storageKey, boardID))
+    if (stored) return { boardID, baseline: stored.summary, decorations: stored.decorations }
+    const viewport = handle.snapshotDecorations().appState
+    return {
+      boardID,
+      baseline: summarizeWhiteboardScene([]),
+      decorations: { elements: [], files: {}, appState: viewport },
+    }
+  }
+
+  const resolveChatRequest = (workspace: typeof state.workspace, message: WhiteboardChatMessage) => {
+    if (!message.requestID || !whiteboardChatRequestFinished(message, !!props.chatWorking)) return workspace
+    chatRequestSnapshots.delete(message.requestID)
+    return unlinkWhiteboardChatRequest(workspace, message.requestID)
+  }
+
+  const chatSourceMissing = (message: WhiteboardChatMessage) => {
+    setState({
+      error: copy().chatSourceMissing,
+      chatAutoAttempted: state.chatAutoAttempted.includes(message.id)
+        ? state.chatAutoAttempted
+        : [...state.chatAutoAttempted, message.id],
+    })
+    if (message.requestID) chatRequestSnapshots.delete(message.requestID)
+    return false
+  }
+
   const populateNewBoard = (
     handle: WhiteboardHandle,
     workspace: typeof state.workspace,
@@ -612,6 +759,10 @@ export default function WhiteboardDialog(props: {
 
     const wasActive = state.workspace.active === version.boardID
     let workspace = removeWhiteboardBoard(state.workspace, version.boardID)
+    if (message.requestID) {
+      workspace = unlinkWhiteboardChatRequest(workspace, message.requestID)
+      chatRequestSnapshots.delete(message.requestID)
+    }
     if (wasActive) workspace = activateWhiteboardBoard(workspace, version.sourceBoardID)
     if (workspace === state.workspace) return false
     if (workspace.active !== state.workspace.active) {
@@ -838,23 +989,35 @@ export default function WhiteboardDialog(props: {
       setState("error", copy().selectionEmpty)
       return false
     }
+    const messageID = Identifier.ascending("message")
+    const sourceBoardID = state.workspace.active
+    const boardName = activeBoard()?.name ?? ""
+    const hasContent = handle.hasContent()
+    const baseline = handle.summarizeScene()
+    const decorations = handle.snapshotDecorations()
+    const sceneContext = [
+      handle.describeScene(chinese(), "all"),
+      scope === "selection" ? handle.describeScene(chinese(), "selection") : "",
+      extraContext?.trim() ?? "",
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+    chatRequestSnapshots.set(messageID, { boardID: sourceBoardID, baseline, decorations })
+    saveWorkspace(linkWhiteboardChatRequest(state.workspace, sourceBoardID, messageID))
     setState({ chatSending: true, error: "" })
-    const blob = handle.hasContent() ? await handle.exportPng(scope).catch(() => undefined) : undefined
-    if (handle.hasContent() && !blob) {
+    const blob = hasContent ? await handle.exportPng(scope).catch(() => undefined) : undefined
+    if (hasContent && !blob) {
+      chatRequestSnapshots.delete(messageID)
+      saveWorkspace(unlinkWhiteboardChatRequest(state.workspace, messageID))
       setState({ chatSending: false, error: copy().failed })
       return false
     }
     const accepted = await Promise.resolve(
       props.onChatSend({
+        messageID,
         request,
-        boardName: activeBoard()?.name ?? "",
-        sceneContext: [
-          handle.describeScene(chinese(), "all"),
-          scope === "selection" ? handle.describeScene(chinese(), "selection") : "",
-          extraContext?.trim() ?? "",
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+        boardName,
+        sceneContext,
         scope,
         image: blob
           ? new File(
@@ -868,7 +1031,11 @@ export default function WhiteboardDialog(props: {
       .then((value) => value !== false)
       .catch(() => false)
     setState("chatSending", false)
-    if (!accepted) setState("error", copy().failed)
+    if (!accepted) {
+      chatRequestSnapshots.delete(messageID)
+      saveWorkspace(unlinkWhiteboardChatRequest(state.workspace, messageID))
+      setState("error", copy().failed)
+    }
     return accepted
   }
 
