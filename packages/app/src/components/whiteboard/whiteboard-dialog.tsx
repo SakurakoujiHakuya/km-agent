@@ -633,11 +633,15 @@ export default function WhiteboardDialog(props: {
     setState("exporting", false)
   }
 
-  const sendChat = async (request: string) => {
+  const sendChat = async (request: string, scope: WhiteboardSceneScope) => {
     const handle = state.handle
     if (!handle || !props.onChatSend || state.chatSending || props.chatWorking) return false
+    if (scope === "selection" && !handle.hasSelection()) {
+      setState("error", copy().selectionEmpty)
+      return false
+    }
     setState({ chatSending: true, error: "" })
-    const blob = handle.hasContent() ? await handle.exportPng().catch(() => undefined) : undefined
+    const blob = handle.hasContent() ? await handle.exportPng(scope).catch(() => undefined) : undefined
     if (handle.hasContent() && !blob) {
       setState({ chatSending: false, error: copy().failed })
       return false
@@ -646,11 +650,19 @@ export default function WhiteboardDialog(props: {
       props.onChatSend({
         request,
         boardName: activeBoard()?.name ?? "",
-        sceneContext: handle.describeScene(chinese()),
+        sceneContext: [
+          handle.describeScene(chinese(), "all"),
+          scope === "selection" ? handle.describeScene(chinese(), "selection") : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        scope,
         image: blob
-          ? new File([blob], `km-agent-whiteboard-chat-${new Date().toISOString().replaceAll(":", "-")}.png`, {
-              type: "image/png",
-            })
+          ? new File(
+              [blob],
+              `km-agent-whiteboard-chat${scope === "selection" ? "-selection" : ""}-${new Date().toISOString().replaceAll(":", "-")}.png`,
+              { type: "image/png" },
+            )
           : undefined,
       }),
     )
@@ -1009,6 +1021,7 @@ export default function WhiteboardDialog(props: {
             sending={state.chatSending}
             applied={state.chatApplied}
             scene={currentScene()}
+            selectionCount={state.selectionCount}
             reviews={state.chatReviews}
             autoApply={state.chatAutoApply}
             disabledReason={props.onChatSend ? undefined : copy().chatUnavailable}

@@ -20,6 +20,17 @@ describe("whiteboard AI chat", () => {
     expect(context).toContain("km-whiteboard")
     expect(context).toContain("不要修改项目文件")
     expect(context).toContain(WHITEBOARD_CHAT_CONTEXT_MARKER)
+
+    const selection = whiteboardChatContext(
+      "机关房",
+      "完整白板结构\n\n白板选区结构化上下文：\n- N2 [菱形] 判定",
+      true,
+      "selection",
+    )
+    expect(selection).toContain("只修改“白板选区结构化上下文”")
+    expect(selection).toContain("完整白板方案")
+    expect(selection).toContain("完整白板结构")
+    expect(selection).toContain("N2 [菱形] 判定")
     expect(whiteboardChatPrompt("x".repeat(WHITEBOARD_CHAT_REQUEST_MAX_LENGTH + 20), false)).not.toContain(
       "x".repeat(WHITEBOARD_CHAT_REQUEST_MAX_LENGTH + 1),
     )

@@ -12,7 +12,7 @@ import {
   reviewWhiteboardProposal,
   type WhiteboardProposalReview,
 } from "./whiteboard-proposal-review"
-import type { WhiteboardSceneSummary } from "./whiteboard-scene"
+import type { WhiteboardSceneScope, WhiteboardSceneSummary } from "./whiteboard-scene"
 
 export function WhiteboardChatPanel(props: {
   chinese: boolean
@@ -21,15 +21,16 @@ export function WhiteboardChatPanel(props: {
   sending: boolean
   applied: readonly string[]
   scene?: WhiteboardSceneSummary
+  selectionCount: number
   reviews?: Readonly<Record<string, WhiteboardProposalReview | undefined>>
   autoApply: boolean
   disabledReason?: string
   onAutoApplyChange: (value: boolean) => void
-  onSend: (request: string) => Promise<boolean | void>
+  onSend: (request: string, scope: WhiteboardSceneScope) => Promise<boolean | void>
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
   onClose: () => void
 }) {
-  const [state, setState] = createStore({ input: "" })
+  const [state, setState] = createStore({ input: "", scope: "all" as WhiteboardSceneScope })
   const copy = createMemo(() =>
     props.chinese
       ? {
@@ -39,6 +40,10 @@ export function WhiteboardChatPanel(props: {
           placeholder: "例如：增加一条可恢复的失败分支，并保留现有主流程",
           send: "发送",
           thinking: "AI 正在调整当前白板…",
+          scope: "编辑范围",
+          all: "整张白板",
+          selection: "选中内容",
+          selectionHint: "先在画布中选中要精修的节点或分支",
           autoApply: "自动生成新版本",
           revision: "应用为新版本",
           current: "替换当前白板",
@@ -53,6 +58,10 @@ export function WhiteboardChatPanel(props: {
           placeholder: "For example: add a recoverable failure branch while preserving the main flow",
           send: "Send",
           thinking: "AI is adjusting the current board…",
+          scope: "Edit scope",
+          all: "Whole board",
+          selection: "Selection",
+          selectionHint: "Select the nodes or branch to refine on the canvas first",
           autoApply: "Auto-create a revision",
           revision: "Apply as revision",
           current: "Replace current board",
@@ -70,10 +79,15 @@ export function WhiteboardChatPanel(props: {
     queueMicrotask(() => scroll?.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" }))
   })
 
+  createEffect(() => {
+    if (props.selectionCount > 0 || state.scope === "all") return
+    setState("scope", "all")
+  })
+
   const send = async () => {
     const request = state.input.trim()
     if (!request || pending() || props.disabledReason) return
-    const accepted = await props.onSend(request)
+    const accepted = await props.onSend(request, state.scope)
     if (accepted === false) return
     setState("input", "")
   }
@@ -179,6 +193,38 @@ export function WhiteboardChatPanel(props: {
             {props.disabledReason}
           </div>
         </Show>
+        <div class="mb-2">
+          <div class="mb-1.5 text-[10px] text-v2-text-text-muted">{copy().scope}</div>
+          <div class="grid grid-cols-2 gap-1 rounded-[8px] bg-v2-background-bg-layer-02 p-1">
+            <button
+              data-action="whiteboard-chat-scope-all"
+              type="button"
+              class={`rounded-[6px] px-2 py-1.5 text-[10px] ${
+                state.scope === "all"
+                  ? "bg-v2-background-bg-base text-v2-text-text-strong shadow-xs"
+                  : "text-v2-text-text-muted hover:text-v2-text-text-base"
+              }`}
+              disabled={pending()}
+              onClick={() => setState("scope", "all")}
+            >
+              {copy().all}
+            </button>
+            <button
+              data-action="whiteboard-chat-scope-selection"
+              type="button"
+              class={`rounded-[6px] px-2 py-1.5 text-[10px] ${
+                state.scope === "selection"
+                  ? "bg-v2-background-bg-base text-v2-text-text-strong shadow-xs"
+                  : "text-v2-text-text-muted hover:text-v2-text-text-base"
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+              disabled={pending() || props.selectionCount === 0}
+              title={props.selectionCount === 0 ? copy().selectionHint : undefined}
+              onClick={() => setState("scope", "selection")}
+            >
+              {copy().selection} · {props.selectionCount}
+            </button>
+          </div>
+        </div>
         <div class="mb-2 flex flex-wrap gap-1.5">
           <For each={copy().hints}>
             {(hint) => (

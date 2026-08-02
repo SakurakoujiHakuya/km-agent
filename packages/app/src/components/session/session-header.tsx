@@ -353,7 +353,7 @@ export function SessionHeader() {
     if (!sessionID || !model || !agent) return false
     const attachment = input.image && model.capabilities.input.image ? await promptImageAttachment(input.image) : undefined
     const text = whiteboardChatPrompt(input.request, chinese())
-    const context = whiteboardChatContext(input.boardName, input.sceneContext, chinese())
+    const context = whiteboardChatContext(input.boardName, input.sceneContext, chinese(), input.scope)
     return sendFollowupDraft({
       api: sdk().api.session,
       serverSync: serverSync(),
