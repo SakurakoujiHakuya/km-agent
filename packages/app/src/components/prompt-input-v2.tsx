@@ -6,10 +6,11 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { createEffect, createMemo, on, Show } from "solid-js"
+import { createEffect, createMemo, on, Show, type Accessor } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import type { PromptInputProps } from "@/components/prompt-input/contracts"
+import { promptPermissionModeCopy, promptWorkflowLabel } from "@/components/prompt-input-workflow"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
 import { promptDesignPlaceholder, promptPlaceholder } from "@/components/prompt-input/placeholder"
@@ -42,12 +43,17 @@ export type PromptInputV2ComposerProps = {
 export type PromptInputV2ControllerProps = Omit<PromptInputProps, "class" | "submission">
 export type PromptInputV2ComposerController = PromptInputV2Interaction & {
   readonly model: PromptInputProps["controls"]["model"]
+  readonly permissions: {
+    accepting: Accessor<boolean>
+    toggle: () => void
+  }
 }
 
 export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
   const dialog = useDialog()
   const command = useCommand()
   const language = useLanguage()
+  const chinese = createMemo(() => language.locale() === "zh" || language.locale() === "zht")
 
   return (
     <div class="flex flex-col gap-3">
@@ -59,19 +65,26 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         attachKeybind={command.keybindParts("file.attach")}
         attachShortcut={command.keybind("file.attach")}
         modelControl={
-          <PromptInputV2ModelControl
-            loading={props.controller.model.loading}
-            paid={props.controller.model.paid}
-            title={language.t("command.model.choose")}
-            keybind={command.keybindParts("model.choose")}
-            model={props.controller.model.selection}
-            providerID={props.controller.model.selection.current()?.provider?.id}
-            modelName={props.controller.model.selection.current()?.name ?? language.t("dialog.model.select.title")}
-            onClose={props.controller.restoreFocus}
-            onUnpaidClick={() =>
-              dialog.show(() => <DialogSelectModelUnpaidV2 model={props.controller.model.selection} />)
-            }
-          />
+          <>
+            <PromptInputV2PermissionControl
+              accepting={props.controller.permissions.accepting}
+              chinese={chinese()}
+              onToggle={props.controller.permissions.toggle}
+            />
+            <PromptInputV2ModelControl
+              loading={props.controller.model.loading}
+              paid={props.controller.model.paid}
+              title={language.t("command.model.choose")}
+              keybind={command.keybindParts("model.choose")}
+              model={props.controller.model.selection}
+              providerID={props.controller.model.selection.current()?.provider?.id}
+              modelName={props.controller.model.selection.current()?.name ?? language.t("dialog.model.select.title")}
+              onClose={props.controller.restoreFocus}
+              onUnpaidClick={() =>
+                dialog.show(() => <DialogSelectModelUnpaidV2 model={props.controller.model.selection} />)
+              }
+            />
+          </>
         }
       />
     </div>
@@ -134,7 +147,12 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       commentCount: commentCount(),
       example: mode() === "shell" ? "git status" : "",
       suggest: false,
-      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
+      t: (key, params) => {
+        if (key === "prompt.placeholder.shell" || key === "prompt.placeholder.normal") {
+          return language.t(key, { example: params?.example ?? "" })
+        }
+        return language.t(key)
+      },
     }),
   )
   const designPlaceholder = () => promptDesignPlaceholder(mode(), placeholder())
@@ -328,7 +346,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         }),
       add: (value, mode) => history.add(value, mode, mode === "shell" ? [] : historyComments()),
       capture: historyComments,
-      restore: (metadata) => restoreHistoryComments(metadata as PromptHistoryComment[]),
+      restore: (metadata) => restoreHistoryComments(promptHistoryComments(metadata)),
     },
     commands,
     context,
@@ -350,17 +368,18 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       if (item) openComment(item, props, sync, layout, files, comments)
     },
     onEditor(element) {
-      editor = element as HTMLDivElement
+      if (!(element instanceof HTMLDivElement)) return
+      editor = element
       props.ref?.(editor)
     },
     onSuggestionSelect(item) {
-      if (item.kind !== "command") return
-      const selected = slashCommands().find((entry) => entry.id === item.id)
-      if (!selected || selected.type === "custom") return
-      return () => command.trigger(selected.id, "slash")
+      const selected = item.kind === "command" ? slashCommands().find((entry) => entry.id === item.id) : undefined
+      return selected && selected.type !== "custom" ? () => command.trigger(selected.id, "slash") : undefined
     },
     attachments: {
-      picker: platform.openAttachmentPickerDialog,
+      picker: platform.openAttachmentPickerDialog
+        ? (options, onFile) => platform.openAttachmentPickerDialog?.(options, onFile) ?? Promise.resolve()
+        : undefined,
       directory: () => sdk().directory,
       isDialogActive: () => !!dialog.active,
       warn: () =>
@@ -375,15 +394,21 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
           title: language.t("common.requestFailed"),
           description: error instanceof Error ? error.message : String(error),
         }),
-      readClipboardImage: platform.readClipboardImage,
-      getPathForFile: platform.getPathForFile,
+      readClipboardImage: platform.readClipboardImage
+        ? () => platform.readClipboardImage?.() ?? Promise.resolve(null)
+        : undefined,
+      getPathForFile: platform.getPathForFile ? (file) => platform.getPathForFile?.(file) ?? "" : undefined,
     },
     view: {
       placeholder: designPlaceholder,
       get agent() {
         return props.controls.agents.visible && props.controls.agents.options.length > 0
           ? {
-              options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
+              options: () =>
+                props.controls.agents.options.map((name) => ({
+                  id: name,
+                  label: promptWorkflowLabel(name, language.locale() === "zh" || language.locale() === "zht"),
+                })),
               current: () => props.controls.agents.current,
               onSelect: (value: string) => props.controls.agents.select(value),
               keybind: () => command.keybindParts("agent.cycle"),
@@ -404,8 +429,6 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       },
     },
   })
-  Object.defineProperty(controller, "model", { get: () => props.controls.model })
-
   command.register("prompt-input", () => [
     {
       id: "file.attach",
@@ -461,7 +484,64 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     ),
   )
 
-  return controller as PromptInputV2ComposerController
+  return {
+    ...controller,
+    get model() {
+      return props.controls.model
+    },
+    permissions: {
+      accepting,
+      toggle: () => {
+        const id = props.controls.session.id
+        if (id) {
+          permission.toggleAutoAccept(id, sdk().directory)
+          return
+        }
+        permission.toggleAutoAcceptDirectory(sdk().directory)
+      },
+    },
+  }
+}
+
+function promptHistoryComments(value: unknown): PromptHistoryComment[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is PromptHistoryComment => {
+    if (!item || typeof item !== "object") return false
+    if (!("id" in item) || typeof item.id !== "string") return false
+    if (!("path" in item) || typeof item.path !== "string") return false
+    if (!("comment" in item) || typeof item.comment !== "string") return false
+    if (!("time" in item) || typeof item.time !== "number") return false
+    if (!("selection" in item) || !item.selection || typeof item.selection !== "object") return false
+    if (!("start" in item.selection) || typeof item.selection.start !== "number") return false
+    if (!("end" in item.selection) || typeof item.selection.end !== "number") return false
+    if ("origin" in item && item.origin !== undefined && item.origin !== "review" && item.origin !== "file")
+      return false
+    if ("preview" in item && item.preview !== undefined && typeof item.preview !== "string") return false
+    return true
+  })
+}
+
+function PromptInputV2PermissionControl(props: {
+  accepting: Accessor<boolean>
+  chinese: boolean
+  onToggle: () => void
+}) {
+  const copy = createMemo(() => promptPermissionModeCopy(props.accepting(), props.chinese))
+  return (
+    <TooltipV2 placement="top" gutter={4} value={copy().tooltip}>
+      <ButtonV2
+        data-action="prompt-permission-mode"
+        variant={props.accepting() ? "neutral" : "ghost-muted"}
+        size="normal"
+        style={{ height: "28px" }}
+        aria-pressed={props.accepting()}
+        onClick={props.onToggle}
+      >
+        <Icon name={props.accepting() ? "check" : "warning"} />
+        <span>{copy().label}</span>
+      </ButtonV2>
+    </TooltipV2>
+  )
 }
 
 function PromptInputV2ModelControl(props: {

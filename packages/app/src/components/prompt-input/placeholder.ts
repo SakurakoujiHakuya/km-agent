@@ -3,7 +3,15 @@ type PromptPlaceholderInput = {
   commentCount: number
   example: string
   suggest: boolean
-  t: (key: string, params?: Record<string, string>) => string
+  t: (
+    key:
+      | "prompt.placeholder.shell"
+      | "prompt.placeholder.normal"
+      | "prompt.placeholder.simple"
+      | "prompt.placeholder.summarizeComments"
+      | "prompt.placeholder.summarizeComment",
+    params?: { example: string },
+  ) => string
 }
 
 export function promptPlaceholder(input: PromptPlaceholderInput) {

@@ -25,7 +25,11 @@ function dataUrl(file: File, mime: string) {
   })
 }
 
-type PromptTarget = Pick<ReturnType<ReturnType<typeof usePrompt>["capture"]>, "current" | "cursor" | "set">
+export type PromptAttachmentTarget = Pick<
+  ReturnType<ReturnType<typeof usePrompt>["capture"]>,
+  "current" | "cursor" | "set"
+>
+type PromptTarget = PromptAttachmentTarget
 type AttachmentTarget = { prompt: PromptTarget; cursor: number | undefined }
 
 type PromptAttachmentsCoreInput = {
@@ -36,6 +40,27 @@ type PromptAttachmentsCoreInput = {
   warn?: () => void
   readClipboardImage?: () => Promise<File | null>
   getPathForFile?: (file: File) => string
+}
+
+export async function appendPromptImageAttachment(
+  file: File,
+  target: PromptAttachmentTarget,
+  options?: { cursor?: number; getPathForFile?: (file: File) => string },
+) {
+  const mime = await attachmentMime(file)
+  if (!mime?.startsWith("image/")) return false
+  const url = await dataUrl(file, mime)
+  if (!url) return false
+  const attachment: ImageAttachmentPart = {
+    type: "image",
+    id: uuid(),
+    filename: file.name,
+    sourcePath: options?.getPathForFile?.(file) || undefined,
+    mime,
+    dataUrl: url,
+  }
+  target.set([...target.current(), attachment], options?.cursor ?? target.cursor())
+  return true
 }
 
 export type PromptAttachmentsInput = {
@@ -59,25 +84,12 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
 
   const add = async (file: File, toast = true, target = capture()) => {
     if (!target) return false
-    const mime = await attachmentMime(file)
-    if (!mime) {
-      if (toast) input.warn?.()
-      return false
-    }
-
-    const url = await dataUrl(file, mime)
-    if (!url) return false
-
-    const attachment: ImageAttachmentPart = {
-      type: "image",
-      id: uuid(),
-      filename: file.name,
-      sourcePath: input.getPathForFile?.(file) || undefined,
-      mime,
-      dataUrl: url,
-    }
-    target.prompt.set([...target.prompt.current(), attachment], target.cursor)
-    return true
+    const attached = await appendPromptImageAttachment(file, target.prompt, {
+      cursor: target.cursor,
+      getPathForFile: input.getPathForFile,
+    })
+    if (!attached && toast) input.warn?.()
+    return attached
   }
 
   const addAttachment = (file: File) => add(file)

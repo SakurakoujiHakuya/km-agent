@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { hasCustomAgent, resolveAgent } from "./local-agent"
+import { hasCustomAgent, hasWorkflowAgents, resolveAgent } from "./local-agent"
 
 describe("hasCustomAgent", () => {
   test("detects explicitly custom agents", () => {
@@ -25,5 +25,12 @@ describe("resolveAgent", () => {
 
   test("uses the first agent when build is unavailable", () => {
     expect(resolveAgent([{ name: "custom" }], "missing")?.name).toBe("custom")
+  })
+})
+
+describe("hasWorkflowAgents", () => {
+  test("requires both Plan and Build", () => {
+    expect(hasWorkflowAgents([{ name: "build" }, { name: "plan" }])).toBe(true)
+    expect(hasWorkflowAgents([{ name: "build" }])).toBe(false)
   })
 })

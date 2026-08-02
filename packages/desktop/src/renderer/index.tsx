@@ -307,6 +307,15 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
         type: "image/png",
       })
     },
+
+    async captureRegion(region) {
+      const image = await window.api.captureRegion(region).catch(() => null)
+      if (!image) return null
+      const blob = new Blob([image.buffer], { type: "image/png" })
+      return new File([blob], `game-preview-${new Date().toISOString().replaceAll(":", "-")}.png`, {
+        type: "image/png",
+      })
+    },
   }
 }
 

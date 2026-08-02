@@ -21,6 +21,13 @@ export type LocalPTY = {
   cursor?: number
 }
 
+export type TerminalNewOptions = {
+  focus?: boolean
+  title?: string
+  command?: string
+  args?: string[]
+}
+
 const WORKSPACE_KEY = "__workspace__"
 const MAX_TERMINAL_SESSIONS = 20
 
@@ -92,6 +99,14 @@ export function getWorkspaceTerminalCacheKey(dir: string, scope: ServerScopeValu
 export function getLegacyTerminalStorageKeys(dir: string, legacySessionID?: string) {
   if (!legacySessionID) return [`${dir}/terminal.v1`]
   return [`${dir}/terminal/${legacySessionID}.v1`, `${dir}/terminal.v1`]
+}
+
+export function terminalCreateOptions(number: number, options?: TerminalNewOptions) {
+  return {
+    title: options?.title?.trim() || defaultTitle(number),
+    ...(options?.command ? { command: options.command } : {}),
+    ...(options?.args ? { args: options.args } : {}),
+  }
 }
 
 type TerminalSession = ReturnType<typeof createWorkspaceTerminalSession>
@@ -236,7 +251,7 @@ function createWorkspaceTerminalSession(
     })
   }
 
-  const unsub = sdk.event.on("pty.exited", (event: { properties: { id: string } }) => {
+  const unsub = sdk.event.on("pty.exited", (event: { properties: { id: string; exitCode?: number } }) => {
     removeExited(event.properties.id)
   })
   onCleanup(unsub)
@@ -311,6 +326,38 @@ function createWorkspaceTerminalSession(
     })
   }
 
+  const inspect = async (id: string) => {
+    if ((await sdk.protocol) === "v1") {
+      const result = await sdk.client.pty.get({ ptyID: id }, { throwOnError: false })
+      if (result.response.status !== 200) return
+      return result.data
+    }
+    return (await sdk.api.pty.get({ ptyID: id, location })).data
+  }
+
+  const waitForExit = (id: string) =>
+    new Promise<number | undefined>((resolve) => {
+      const state = { settled: false }
+      const finish = (exitCode?: number) => {
+        if (state.settled) return
+        state.settled = true
+        unsubscribe()
+        resolve(exitCode)
+      }
+      const unsubscribe = sdk.event.on("pty.exited", (event: { properties: { id: string; exitCode?: number } }) => {
+        if (event.properties.id !== id) return
+        finish(event.properties.exitCode)
+      })
+      void inspect(id)
+        .then((info) => {
+          if (!info || info.status === "exited") {
+            const exitCode = info && "exitCode" in info && typeof info.exitCode === "number" ? info.exitCode : undefined
+            finish(exitCode)
+          }
+        })
+        .catch(() => finish())
+    })
+
   return {
     ready,
     all: createMemo(() => store.all),
@@ -321,41 +368,42 @@ function createWorkspaceTerminalSession(
         setStore("all", [])
       })
     },
-    new(options?: { focus?: boolean }) {
+    async new(options?: TerminalNewOptions) {
       const nextNumber = pickNextTerminalNumber()
       const focusRequest = options?.focus ? requestFocus(undefined, true) : undefined
+      const createOptions = terminalCreateOptions(nextNumber, options)
 
       const doCreate = async () => {
         if ((await sdk.protocol) === "v1") {
-          return (await sdk.client.pty.create({ title: defaultTitle(nextNumber) })).data
+          return (await sdk.client.pty.create(createOptions)).data
         }
-        return (await sdk.api.pty.create({ location, title: defaultTitle(nextNumber) })).data
+        return (await sdk.api.pty.create({ location, ...createOptions })).data
       }
-      doCreate()
-        .then((data) => {
-          const id = data?.id
-          if (!id) {
-            if (focusRequest !== undefined) cancelFocus(focusRequest)
-            return
-          }
-          const newTerminal = {
-            id,
-            title: data?.title ?? defaultTitle(nextNumber),
-            titleNumber: nextNumber,
-          }
-          batch(() => {
-            setStore("all", store.all.length, newTerminal)
-            setStore("active", id)
-            if (focusRequest !== undefined && ui.focus?.request === focusRequest) {
-              setUi("focus", { request: focusRequest, id, pending: false })
-            }
-          })
-        })
-        .catch((error: unknown) => {
-          if (focusRequest !== undefined) cancelFocus(focusRequest)
-          console.error("Failed to create terminal", error)
-        })
+      const data = await doCreate().catch((error: unknown) => {
+        if (focusRequest !== undefined) cancelFocus(focusRequest)
+        console.error("Failed to create terminal", error)
+        return undefined
+      })
+      const id = data?.id
+      if (!id) {
+        if (focusRequest !== undefined) cancelFocus(focusRequest)
+        return
+      }
+      const newTerminal = {
+        id,
+        title: data.title ?? createOptions.title,
+        titleNumber: nextNumber,
+      }
+      batch(() => {
+        setStore("all", store.all.length, newTerminal)
+        setStore("active", id)
+        if (focusRequest !== undefined && ui.focus?.request === focusRequest) {
+          setUi("focus", { request: focusRequest, id, pending: false })
+        }
+      })
+      return newTerminal
     },
+    waitForExit,
     update(pty: Partial<LocalPTY> & { id: string }) {
       update(pty)
     },
@@ -526,7 +574,8 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       ready: () => workspace().ready(),
       all: () => workspace().all(),
       active: () => workspace().active(),
-      new: (options?: { focus?: boolean }) => workspace().new(options),
+      new: (options?: TerminalNewOptions) => workspace().new(options),
+      waitForExit: (id: string) => workspace().waitForExit(id),
       update: (pty: Partial<LocalPTY> & { id: string }) => workspace().update(pty),
       trim: (id: string) => workspace().trim(id),
       trimAll: () => workspace().trimAll(),

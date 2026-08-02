@@ -7,6 +7,8 @@ export function HomeSessions(props: {
   sessions: HomeSessionsController
   search: HomeSessionSearchController
   scroll: HomeScrollController
+  onAddProject: () => void
+  addProjectLabel: string
 }) {
   return (
     <HomeSessionsView
@@ -25,6 +27,8 @@ export function HomeSessions(props: {
       titleOpacity={props.scroll.header.titleOpacity}
       isOpenTab={props.sessions.tab.isOpen}
       onCreateSession={props.sessions.session.create}
+      onAddProject={props.onAddProject}
+      addProjectLabel={props.addProjectLabel}
       onOpenSession={props.sessions.session.open}
       onArchiveSession={props.sessions.session.archive}
       onSetHoverTarget={props.scroll.viewport.setHoverTarget}

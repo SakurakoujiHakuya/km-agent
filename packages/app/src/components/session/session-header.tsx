@@ -8,14 +8,17 @@ import { Spinner } from "@opencode-ai/ui/spinner"
 import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, lazy, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
+import { useLocal } from "@/context/local"
 import { usePlatform } from "@/context/platform"
+import { usePrompt } from "@/context/prompt"
+import { useSDK } from "@/context/sdk"
 import { useServer } from "@/context/server"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
@@ -33,6 +36,30 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount } from "../titlebar"
+import {
+  mergePreviewFeedbackPrompt,
+  previewFeedbackAppendPrompt,
+  previewStartProcess,
+  shouldAppendPreviewFeedback,
+  type PreviewCaptureIntent,
+} from "../game-preview"
+import {
+  previewBuildOutputPath,
+  previewBuildResultFromExitCode,
+  type PreviewBuildResult,
+  type PreviewBuildTarget,
+} from "../game-preview-build"
+import { mergePreviewProjectPrompt, previewProjectContext } from "../game-preview-project"
+import { loadPreviewProjectProfile } from "../game-preview-project-loader"
+import { appendPromptImageAttachment } from "../prompt-input/attachments"
+import {
+  seedWhiteboardPrompt,
+  type WhiteboardHandoffIntent,
+  whiteboardAgent,
+  whiteboardProjectDirectory,
+  whiteboardPrompt,
+} from "../whiteboard/whiteboard-prompt"
+import { latestWhiteboardProposalText } from "../whiteboard/whiteboard-proposal"
 
 const OPEN_APPS = [
   "vscode",
@@ -51,8 +78,14 @@ const OPEN_APPS = [
   "sublime-text",
 ] as const
 
+const GamePreviewDialog = lazy(() => import("@/components/game-preview-dialog"))
+const WhiteboardDialog = lazy(() => import("@/components/whiteboard/whiteboard-dialog"))
+
 type OpenApp = (typeof OPEN_APPS)[number]
 type OS = "macos" | "windows" | "linux" | "unknown"
+
+const isOpenApp = (value: unknown): value is OpenApp =>
+  typeof value === "string" && OPEN_APPS.some((app) => app === value)
 
 const MAC_APPS = [
   {
@@ -139,9 +172,12 @@ const showRequestError = (language: ReturnType<typeof useLanguage>, err: unknown
 
 export function SessionHeader() {
   const layout = useLayout()
+  const local = useLocal()
   const command = useCommand()
   const server = useServer()
   const platform = usePlatform()
+  const prompt = usePrompt()
+  const sdk = useSDK()
   const language = useLanguage()
   const settings = useSettings()
   const sync = useSync()
@@ -151,7 +187,7 @@ export function SessionHeader() {
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
     const directory = projectDirectory()
-    if (!directory) return
+    if (!directory) return undefined
     return layout.projects.list().find((p) => p.worktree === directory || p.sandboxes?.includes(directory))
   })
   const name = createMemo(() => {
@@ -160,6 +196,15 @@ export function SessionHeader() {
     return getFilename(projectDirectory())
   })
   const hotkey = createMemo(() => command.keybind("file.open"))
+  const startupCommand = createMemo(
+    () => project()?.commands?.start?.trim() || sync().data.projectMeta?.commands?.start?.trim(),
+  )
+  const chinese = createMemo(() => language.locale() === "zh" || language.locale() === "zht")
+  const whiteboardLabel = createMemo(() => (chinese() ? "创意白板" : "Idea board"))
+  const projectDesignDirectory = createMemo(() => whiteboardProjectDirectory(projectDirectory(), project()?.worktree))
+  const whiteboardProposal = createMemo(() =>
+    latestWhiteboardProposalText(params.id ? (sync().data.message[params.id] ?? []) : [], sync().data.part),
+  )
   const os = createMemo(() => detectOS(platform))
   const isV2 = settings.general.newLayoutDesigns
   const search = settings.visibility.search
@@ -217,8 +262,83 @@ export function SessionHeader() {
     focusTerminalById(id)
   }
 
+  const startPreview = async (detected?: string) => {
+    const startup = detected?.trim() || startupCommand()
+    if (!startup) return false
+    const process = previewStartProcess(startup, os() === "windows" ? "windows" : "unix")
+    if (!view().terminal.opened()) view().terminal.toggle()
+    return !!(await terminal.new({ title: "Game Preview", ...process }))
+  }
+
+  const buildPreview = async (target: PreviewBuildTarget): Promise<PreviewBuildResult> => {
+    const process = previewStartProcess(target.command, os() === "windows" ? "windows" : "unix")
+    if (!view().terminal.opened()) view().terminal.toggle()
+    const created = await terminal.new({ title: `Game Build · ${target.name}`, ...process })
+    if (!created) return "failed"
+    return previewBuildResultFromExitCode(await terminal.waitForExit(created.id))
+  }
+
+  const revealBuild = async (target: PreviewBuildTarget) => {
+    if (!platform.revealPath || !server.isLocal()) return false
+    const output = previewBuildOutputPath(projectDirectory(), target.output)
+    if (!output) return false
+    return platform.revealPath(output)
+  }
+
+  const capturePreview = async (files: File[], intent: PreviewCaptureIntent, annotation?: string) => {
+    const target = prompt.capture()
+    for (const file of files) {
+      if (!(await appendPromptImageAttachment(file, target))) return false
+    }
+    const current = target.current()
+    const chinese = language.locale() === "zh" || language.locale() === "zht"
+    const currentText = current
+      .filter((part) => part.type === "text")
+      .map((part) => part.content)
+      .join("\n")
+    const content = previewFeedbackAppendPrompt(currentText, chinese, intent, annotation)
+    const next = mergePreviewFeedbackPrompt(current, content, shouldAppendPreviewFeedback(intent, annotation))
+    if (next !== current) {
+      const text = next.find((part) => part.type === "text")
+      target.set(next, text?.type === "text" ? text.content.length : undefined)
+    }
+    setPreview("open", false)
+    return true
+  }
+
+  const requestPrototype = (content: string) => {
+    const target = prompt.capture()
+    const current = target.current()
+    const next = mergePreviewProjectPrompt(current, content)
+    if (next !== current) {
+      const text = next.find((part) => part.type === "text")
+      target.set(next, text?.type === "text" ? text.content.length : undefined)
+    }
+    setPreview("open", false)
+    return true
+  }
+
+  const attachWhiteboard = async (file: File, sceneContext?: string, intent: WhiteboardHandoffIntent = "implement") => {
+    const target = prompt.capture()
+    if (!(await appendPromptImageAttachment(file, target))) return false
+    local.agent.set(whiteboardAgent(intent))
+    const profile = await loadPreviewProjectProfile(sdk())
+    const stackContext = profile.kind === "unknown" ? "" : previewProjectContext(profile, chinese())
+    const context = [sceneContext?.trim(), stackContext].filter(Boolean).join("\n\n")
+    const current = target.current()
+    const next = seedWhiteboardPrompt(current, whiteboardPrompt(chinese(), intent), context || undefined)
+    if (next !== current) {
+      const text = next.find((part) => part.type === "text")
+      target.set(next, text?.type === "text" ? text.content.length : undefined)
+    }
+    setWhiteboard("open", false)
+    return true
+  }
+
   const [prefs, setPrefs] = persisted(Persist.global("open.app"), createStore({ app: "finder" as OpenApp }))
   const [menu, setMenu] = createStore({ open: false })
+  const [preview, setPreview] = createStore({ open: false })
+  const [whiteboard, setWhiteboard] = createStore({ open: false })
   const [openRequest, setOpenRequest] = createStore({
     app: undefined as OpenApp | undefined,
   })
@@ -237,6 +357,12 @@ export function SessionHeader() {
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
     statusVisible: status(),
     statusLabel: language.t("status.popover.trigger"),
+    whiteboardLabel: whiteboardLabel(),
+    whiteboardVisible: !!projectDesignDirectory(),
+    onWhiteboardOpen: () => setWhiteboard("open", true),
+    previewLabel: chinese() ? "Demo 预览" : "Demo preview",
+    previewVisible: !!projectDirectory(),
+    onPreviewOpen: () => setPreview("open", true),
     reviewLabel: language.t("command.review.toggle"),
     reviewKeybind: reviewTooltipKeybind(command),
     reviewVisible: isDesktop(),
@@ -391,8 +517,8 @@ export function SessionHeader() {
                                       class="mt-1"
                                       value={current().id}
                                       onChange={(value) => {
-                                        if (!OPEN_APPS.includes(value as OpenApp)) return
-                                        selectApp(value as OpenApp)
+                                        if (!isOpenApp(value)) return
+                                        selectApp(value)
                                       }}
                                     >
                                       <For each={options()}>
@@ -443,6 +569,30 @@ export function SessionHeader() {
                     <Show when={status()}>
                       <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
                         <StatusPopover />
+                      </Tooltip>
+                    </Show>
+                    <Show when={projectDesignDirectory()}>
+                      <Tooltip placement="bottom" value={whiteboardLabel()}>
+                        <Button
+                          variant="ghost"
+                          class="titlebar-icon h-6 w-8 shrink-0 p-0"
+                          onClick={() => setWhiteboard("open", true)}
+                          aria-label={whiteboardLabel()}
+                        >
+                          <Icon size="small" name="edit" />
+                        </Button>
+                      </Tooltip>
+                    </Show>
+                    <Show when={projectDirectory()}>
+                      <Tooltip placement="bottom" value={chinese() ? "Demo 预览" : "Demo preview"}>
+                        <Button
+                          variant="ghost"
+                          class="titlebar-icon h-6 w-8 shrink-0 p-0"
+                          onClick={() => setPreview("open", true)}
+                          aria-label={chinese() ? "Demo 预览" : "Demo preview"}
+                        >
+                          <Icon size="small" name="window-cursor" />
+                        </Button>
                       </Tooltip>
                     </Show>
                     <TooltipKeybind
@@ -512,6 +662,27 @@ export function SessionHeader() {
           </Portal>
         )}
       </Show>
+      <Show when={preview.open && projectDesignDirectory()}>
+        <GamePreviewDialog
+          directory={projectDesignDirectory()}
+          startCommand={startupCommand()}
+          onStart={startPreview}
+          onBuild={buildPreview}
+          onRevealBuild={platform.revealPath && server.isLocal() ? revealBuild : undefined}
+          onCapture={capturePreview}
+          onRequestPrototype={requestPrototype}
+          onClose={() => setPreview("open", false)}
+        />
+      </Show>
+      <Show when={whiteboard.open && projectDesignDirectory()}>
+        <WhiteboardDialog
+          directory={projectDesignDirectory()}
+          storageKey={`km-agent.whiteboard.v1:${projectDesignDirectory()}`}
+          assistantText={whiteboardProposal()}
+          onAttach={attachWhiteboard}
+          onClose={() => setWhiteboard("open", false)}
+        />
+      </Show>
     </>
   )
 }
@@ -519,6 +690,12 @@ export function SessionHeader() {
 type SessionHeaderV2ActionsState = {
   statusVisible: boolean
   statusLabel: string
+  whiteboardLabel: string
+  whiteboardVisible: boolean
+  onWhiteboardOpen: () => void
+  previewLabel: string
+  previewVisible: boolean
+  onPreviewOpen: () => void
   reviewLabel: string
   reviewKeybind: string[]
   reviewVisible: boolean
@@ -527,14 +704,38 @@ type SessionHeaderV2ActionsState = {
 }
 
 function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
-  const language = useLanguage()
-
   return (
     <div class="flex items-center gap-2">
       <Show when={props.state.statusVisible}>
         <Tooltip placement="bottom" value={props.state.statusLabel}>
           <StatusPopoverV2 />
         </Tooltip>
+      </Show>
+      <Show when={props.state.whiteboardVisible}>
+        <TooltipV2 class="shrink-0" placement="bottom" value={props.state.whiteboardLabel}>
+          <IconButtonV2
+            type="button"
+            variant="ghost-muted"
+            size="large"
+            class="!w-9 shrink-0"
+            onClick={props.state.onWhiteboardOpen}
+            aria-label={props.state.whiteboardLabel}
+            icon={<IconV2 name="edit" />}
+          />
+        </TooltipV2>
+      </Show>
+      <Show when={props.state.previewVisible}>
+        <TooltipV2 class="shrink-0" placement="bottom" value={props.state.previewLabel}>
+          <IconButtonV2
+            type="button"
+            variant="ghost-muted"
+            size="large"
+            class="!w-9 shrink-0"
+            onClick={props.state.onPreviewOpen}
+            aria-label={props.state.previewLabel}
+            icon={<IconV2 name="monitor" />}
+          />
+        </TooltipV2>
       </Show>
       <Show when={props.state.reviewVisible}>
         <TooltipV2

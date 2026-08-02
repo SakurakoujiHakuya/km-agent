@@ -5,7 +5,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
-import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../preload/types"
+import type { CaptureRegion, FatalRendererError, ServerReadyData, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { setForceFocus } from "./debug"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
@@ -212,6 +212,28 @@ export function registerIpcHandlers(deps: Deps) {
 
   ipcMain.handle("read-clipboard-image", () => {
     const image = clipboard.readImage()
+    if (image.isEmpty()) return null
+    const buffer = image.toPNG().buffer
+    const size = image.getSize()
+    return { buffer, width: size.width, height: size.height }
+  })
+
+  ipcMain.handle("capture-region", async (event: IpcMainInvokeEvent, region: CaptureRegion) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) throw new Error("Window not found")
+    if (
+      ![region?.x, region?.y, region?.width, region?.height].every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      )
+    )
+      return null
+    const bounds = win.getContentBounds()
+    const x = Math.max(0, Math.floor(region.x))
+    const y = Math.max(0, Math.floor(region.y))
+    const width = Math.min(Math.max(1, Math.ceil(region.width)), Math.max(0, bounds.width - x))
+    const height = Math.min(Math.max(1, Math.ceil(region.height)), Math.max(0, bounds.height - y))
+    if (width <= 0 || height <= 0) return null
+    const image = await event.sender.capturePage({ x, y, width, height })
     if (image.isEmpty()) return null
     const buffer = image.toPNG().buffer
     const size = image.getSize()

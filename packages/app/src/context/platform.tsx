@@ -19,6 +19,13 @@ type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type PlatformName = "web" | "desktop"
 type DesktopOS = "macos" | "windows" | "linux"
 
+export type CaptureRegion = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type FatalRendererErrorLog = {
   error: string
   url: string
@@ -108,6 +115,9 @@ type PlatformBase = {
 
   /** Read image from clipboard (desktop only) */
   readClipboardImage?(): Promise<File | null>
+
+  /** Capture a rendered region of this window as a PNG (desktop only) */
+  captureRegion?(region: CaptureRegion): Promise<File | null>
 
   /** Export collected diagnostic logs (desktop only) */
   exportDebugLogs?(): Promise<string>

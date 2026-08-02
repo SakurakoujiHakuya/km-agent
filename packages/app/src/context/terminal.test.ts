@@ -4,6 +4,7 @@ import { ServerScope } from "@/utils/server-scope"
 let getWorkspaceTerminalCacheKey: typeof import("./terminal").getWorkspaceTerminalCacheKey
 let getLegacyTerminalStorageKeys: (dir: string, legacySessionID?: string) => string[]
 let migrateTerminalState: (value: unknown) => unknown
+let terminalCreateOptions: typeof import("./terminal").terminalCreateOptions
 
 beforeAll(async () => {
   mock.module("@solidjs/router", () => ({
@@ -22,6 +23,7 @@ beforeAll(async () => {
   getWorkspaceTerminalCacheKey = mod.getWorkspaceTerminalCacheKey
   getLegacyTerminalStorageKeys = mod.getLegacyTerminalStorageKeys
   migrateTerminalState = mod.migrateTerminalState
+  terminalCreateOptions = mod.terminalCreateOptions
 })
 
 describe("getWorkspaceTerminalCacheKey", () => {
@@ -87,5 +89,22 @@ describe("migrateTerminalState", () => {
         { id: "two", title: "shell", titleNumber: 7 },
       ],
     })
+  })
+})
+
+describe("terminalCreateOptions", () => {
+  test("keeps the default interactive terminal shape", () => {
+    expect(terminalCreateOptions(3)).toEqual({ title: "Terminal 3" })
+  })
+
+  test("passes an explicit preview process to the PTY", () => {
+    expect(
+      terminalCreateOptions(2, {
+        focus: true,
+        title: "Game Preview",
+        command: "/bin/sh",
+        args: ["-lc", "bun dev"],
+      }),
+    ).toEqual({ title: "Game Preview", command: "/bin/sh", args: ["-lc", "bun dev"] })
   })
 })

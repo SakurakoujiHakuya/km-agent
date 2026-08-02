@@ -97,6 +97,7 @@ const api: ElectronAPI = {
   openPath: (path, app) => ipcRenderer.invoke("open-path", path, app),
   revealPath: (path) => ipcRenderer.invoke("reveal-path", path),
   readClipboardImage: () => ipcRenderer.invoke("read-clipboard-image"),
+  captureRegion: (region) => ipcRenderer.invoke("capture-region", region),
   getWindowFocused: () => ipcRenderer.invoke("get-window-focused"),
   getWindowFullscreen: () => ipcRenderer.invoke("get-window-fullscreen"),
   onWindowFullscreenChanged: (cb) => {

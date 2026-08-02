@@ -14,6 +14,11 @@ export function NewHome() {
   const sessions = createHomeSessionsController(home)
   const search = createHomeSessionSearchController(home, sessions)
   const scroll = createHomeScrollController(sessions.data.groups)
+  const addProject = () => {
+    const server = projects.server.list()[0]
+    if (!server) return
+    projects.project.choose(server)
+  }
   return (
     <div
       class={`
@@ -36,7 +41,13 @@ export function NewHome() {
           `}
         >
           <HomeProjects projects={projects} scroll={scroll} />
-          <HomeSessions sessions={sessions} search={search} scroll={scroll} />
+          <HomeSessions
+            sessions={sessions}
+            search={search}
+            scroll={scroll}
+            onAddProject={addProject}
+            addProjectLabel={projects.copy.language.t("home.project.add")}
+          />
           <HomeUtilityNav
             class="flex lg:hidden"
             onOpenSettings={projects.utility.settings}

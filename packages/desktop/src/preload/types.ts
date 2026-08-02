@@ -41,6 +41,13 @@ export type FatalRendererError = {
   os?: string
 }
 
+export type CaptureRegion = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type ElectronAPI = {
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
@@ -88,6 +95,7 @@ export type ElectronAPI = {
   openPath: (path: string, app?: string) => Promise<void>
   revealPath: (path: string) => Promise<boolean>
   readClipboardImage: () => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
+  captureRegion: (region: CaptureRegion) => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
   getWindowFocused: () => Promise<boolean>
   getWindowFullscreen: () => Promise<boolean>
   onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void
