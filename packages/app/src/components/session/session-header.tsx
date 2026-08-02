@@ -357,6 +357,43 @@ export function SessionHeader() {
     return true
   }
 
+  const buildWhiteboardDemo = async (file: File, sceneContext?: string) => {
+    const sessionID = params.id
+    const model = local.model.current()
+    const agent = sync().data.agent.find((item) => item.name === "build")
+    if (!sessionID || !model || !agent) return false
+
+    const attachment = model.capabilities.input.image ? await promptImageAttachment(file) : undefined
+    const profile = await loadPreviewProjectProfile(sdk())
+    const stackContext = profile.kind === "unknown" ? "" : previewProjectContext(profile, chinese())
+    const context = [sceneContext?.trim(), stackContext].filter(Boolean).join("\n\n")
+    const text = whiteboardPrompt(chinese(), "implement")
+    const accepted = await sendFollowupDraft({
+      api: sdk().api.session,
+      serverSync: serverSync(),
+      sync: sync(),
+      optimisticBusy: true,
+      delivery: "queue",
+      draft: {
+        sessionID,
+        sessionDirectory: sdk().directory,
+        prompt: [{ type: "text", content: text, start: 0, end: text.length }, ...(attachment ? [attachment] : [])],
+        context: [],
+        agent: agent.name,
+        model: { providerID: model.provider.id, modelID: model.id },
+        variant: local.model.variant.current(),
+      },
+      syntheticText: context || undefined,
+    }).catch((error: unknown) => {
+      showRequestError(language, error)
+      return false
+    })
+    if (!accepted) return false
+    local.agent.set(agent.name)
+    setWhiteboard("open", false)
+    return true
+  }
+
   const sendWhiteboardChat = async (input: WhiteboardChatSendInput) => {
     const sessionID = params.id
     const model = local.model.current()
@@ -750,6 +787,7 @@ export function SessionHeader() {
           chatCanStop={whiteboardChatCanStop()}
           onChatSend={sendWhiteboardChat}
           onChatStop={stopWhiteboardChat}
+          onBuild={buildWhiteboardDemo}
           onAttach={attachWhiteboard}
           onClose={() => setWhiteboard("open", false)}
         />

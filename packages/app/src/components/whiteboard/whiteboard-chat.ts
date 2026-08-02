@@ -150,6 +150,10 @@ export function whiteboardChatEditableProposal(message: WhiteboardChatMessage) {
   return message.proposal ?? message.draft?.proposal ?? parseWhiteboardProposal(message.text)
 }
 
+export function whiteboardChatBuildable(message: WhiteboardChatMessage) {
+  return !!message.proposal || message.draft?.complete === true
+}
+
 export function whiteboardChatActiveDraftID(messages: readonly WhiteboardChatMessage[], working: boolean) {
   if (!working) return undefined
   const latest = messages.at(-1)

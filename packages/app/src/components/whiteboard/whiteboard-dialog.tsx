@@ -12,6 +12,7 @@ import {
 } from "../game-preview-scenarios"
 import { mountExcalidrawWhiteboard, type WhiteboardHandle } from "./excalidraw-bridge"
 import {
+  whiteboardChatBuildable,
   type WhiteboardChatMessage,
   type WhiteboardChatSendInput,
   whiteboardChatEditableProposal,
@@ -50,6 +51,12 @@ import {
   whiteboardWorkspaceStorageKey,
 } from "./whiteboard-workspace"
 
+type WhiteboardHandoffHandler = (
+  file: File,
+  sceneContext?: string,
+  intent?: WhiteboardHandoffIntent,
+) => boolean | void | Promise<boolean | void>
+
 export default function WhiteboardDialog(props: {
   directory: string
   storageKey: string
@@ -62,11 +69,8 @@ export default function WhiteboardDialog(props: {
   chatCanStop?: boolean
   onChatSend?: (input: WhiteboardChatSendInput) => boolean | void | Promise<boolean | void>
   onChatStop?: () => boolean | void | Promise<boolean | void>
-  onAttach: (
-    file: File,
-    sceneContext?: string,
-    intent?: WhiteboardHandoffIntent,
-  ) => boolean | void | Promise<boolean | void>
+  onBuild?: WhiteboardHandoffHandler
+  onAttach: WhiteboardHandoffHandler
   onClose: () => void
 }) {
   const language = useLanguage()
@@ -691,28 +695,29 @@ export default function WhiteboardDialog(props: {
     importInput?.click()
   }
 
-  const attach = async (
+  const handoff = async (
     scope: WhiteboardSceneScope,
     extraContext?: string,
     intent: WhiteboardHandoffIntent = state.handoffIntent,
+    receiver: WhiteboardHandoffHandler = props.onAttach,
   ) => {
     const handle = state.handle
     if (!handle?.hasContent()) {
       setState("error", scope === "selection" ? copy().selectionEmpty : copy().empty)
-      return
+      return false
     }
     if (scope === "selection" && !handle.hasSelection()) {
       setState("error", copy().selectionEmpty)
-      return
+      return false
     }
     setState({ exporting: true, error: "" })
     const blob = await handle.exportPng(scope).catch(() => undefined)
     if (!blob) {
       setState({ exporting: false, error: copy().failed })
-      return
+      return false
     }
     const accepted = await Promise.resolve(
-      props.onAttach(
+      receiver(
         new File(
           [blob],
           `km-agent-whiteboard${scope === "selection" ? "-selection" : ""}-${new Date().toISOString().replaceAll(":", "-")}.png`,
@@ -728,9 +733,40 @@ export default function WhiteboardDialog(props: {
       .catch(() => false)
     if (!accepted) {
       setState({ exporting: false, error: copy().failed })
-      return
+      return false
     }
     setState("exporting", false)
+    return true
+  }
+
+  const attach = (
+    scope: WhiteboardSceneScope,
+    extraContext?: string,
+    intent: WhiteboardHandoffIntent = state.handoffIntent,
+  ) => handoff(scope, extraContext, intent)
+
+  const buildChatProposal = async (message: WhiteboardChatMessage) => {
+    const proposal = whiteboardChatEditableProposal(message)
+    if (
+      !proposal ||
+      !whiteboardChatBuildable(message) ||
+      !props.onBuild ||
+      props.chatWorking ||
+      state.chatSending ||
+      state.exporting ||
+      state.importing
+    )
+      return false
+
+    const version = chatVersions()[message.id]
+    if (version) switchBoard(version.boardID)
+    else {
+      if (!applyChatProposal(message, "revision")) return false
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    }
+
+    const source = `${chinese() ? "实现来源：AI 白板方案" : "Build source: AI whiteboard proposal"} · ${proposal.title}`
+    return handoff("all", source, "implement", props.onBuild)
   }
 
   const sendChat = async (request: string, scope: WhiteboardSceneScope) => {
@@ -1120,6 +1156,7 @@ export default function WhiteboardDialog(props: {
             working={!!props.chatWorking}
             canStop={!!props.chatCanStop}
             sending={state.chatSending}
+            building={state.exporting}
             applied={chatApplied()}
             versions={chatVersions()}
             activeBoardID={state.workspace.active}
@@ -1132,6 +1169,7 @@ export default function WhiteboardDialog(props: {
             onSend={sendChat}
             onStop={props.onChatStop}
             onApply={applyChatProposal}
+            onBuild={props.onBuild ? buildChatProposal : undefined}
             onOpenVersion={switchBoard}
             onClose={() => setState("chatOpen", false)}
           />

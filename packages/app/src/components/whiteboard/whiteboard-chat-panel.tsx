@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
   whiteboardChatActiveDraftID,
+  whiteboardChatBuildable,
   whiteboardChatCanCompose,
   whiteboardChatDisplayText,
   type WhiteboardChatMessage,
@@ -20,6 +21,7 @@ export function WhiteboardChatPanel(props: {
   working: boolean
   canStop: boolean
   sending: boolean
+  building?: boolean
   applied: readonly string[]
   versions?: Readonly<Record<string, WhiteboardChatVersion>>
   activeBoardID?: string
@@ -32,6 +34,7 @@ export function WhiteboardChatPanel(props: {
   onSend: (request: string, scope: WhiteboardSceneScope) => Promise<boolean | void>
   onStop?: () => Promise<boolean | void> | boolean | void
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
+  onBuild?: (message: WhiteboardChatMessage) => Promise<boolean | void> | boolean | void
   onOpenVersion?: (boardID: string) => void
   onClose: () => void
 }) {
@@ -69,6 +72,8 @@ export function WhiteboardChatPanel(props: {
           openVersion: "打开版本",
           currentVersion: "当前版本",
           proposal: "可编辑方案",
+          buildDemo: "制作 Demo",
+          buildHint: "保存为安全版本，并携带白板结构与项目技术栈立即启动 Build 任务",
           hints: ["补全流程", "增加失败反馈", "检查软锁", "优化新手引导"],
         }
       : {
@@ -98,6 +103,8 @@ export function WhiteboardChatPanel(props: {
           openVersion: "Open version",
           currentVersion: "Current version",
           proposal: "Editable proposal",
+          buildDemo: "Build demo",
+          buildHint: "Save a safe version and start a Build task with the board structure and project stack",
           hints: ["Complete the flow", "Add failure feedback", "Check soft locks", "Improve onboarding"],
         },
   )
@@ -221,7 +228,13 @@ export function WhiteboardChatPanel(props: {
                                   applied={copy().applied}
                                   open={copy().openVersion}
                                   current={copy().currentVersion}
+                                  build={whiteboardChatBuildable(message) ? copy().buildDemo : undefined}
+                                  buildHint={copy().buildHint}
+                                  buildDisabled={pending() || !!props.building || !props.onBuild}
                                   onOpen={props.onOpenVersion}
+                                  onBuild={
+                                    whiteboardChatBuildable(message) ? () => props.onBuild?.(message) : undefined
+                                  }
                                 />
                               }
                             >
@@ -242,6 +255,18 @@ export function WhiteboardChatPanel(props: {
                                 >
                                   {copy().current}
                                 </ButtonV2>
+                                <Show when={whiteboardChatBuildable(message)}>
+                                  <ButtonV2
+                                    data-action="whiteboard-chat-build-demo"
+                                    variant="neutral"
+                                    size="small"
+                                    disabled={pending() || props.building || !props.onBuild}
+                                    title={copy().buildHint}
+                                    onClick={() => void props.onBuild?.(message)}
+                                  >
+                                    {copy().buildDemo}
+                                  </ButtonV2>
+                                </Show>
                               </div>
                             </Show>
                           </div>
@@ -270,7 +295,11 @@ export function WhiteboardChatPanel(props: {
                             applied={copy().applied}
                             open={copy().openVersion}
                             current={copy().currentVersion}
+                            build={copy().buildDemo}
+                            buildHint={copy().buildHint}
+                            buildDisabled={pending() || !!props.building || !props.onBuild}
                             onOpen={props.onOpenVersion}
+                            onBuild={() => props.onBuild?.(message)}
                           />
                         }
                       >
@@ -290,6 +319,16 @@ export function WhiteboardChatPanel(props: {
                             onClick={() => props.onApply(message, "current")}
                           >
                             {copy().current}
+                          </ButtonV2>
+                          <ButtonV2
+                            data-action="whiteboard-chat-build-demo"
+                            variant="neutral"
+                            size="small"
+                            disabled={pending() || props.building || !props.onBuild}
+                            title={copy().buildHint}
+                            onClick={() => void props.onBuild?.(message)}
+                          >
+                            {copy().buildDemo}
                           </ButtonV2>
                         </div>
                       </Show>
@@ -413,30 +452,48 @@ function AppliedVersion(props: {
   applied: string
   open: string
   current: string
+  build?: string
+  buildHint?: string
+  buildDisabled?: boolean
   onOpen?: (boardID: string) => void
+  onBuild?: () => Promise<boolean | void> | boolean | void
 }) {
   return (
-    <Show
-      when={props.version}
-      fallback={<span class="text-[11px] text-v2-text-text-muted">{props.applied}</span>}
-      keyed
-    >
-      {(version) => {
-        const active = () => version.boardID === props.activeBoardID
-        return (
-          <ButtonV2
-            data-action="whiteboard-chat-open-version"
-            variant="ghost-muted"
-            size="small"
-            disabled={active() || !props.onOpen}
-            title={version.boardName}
-            onClick={() => props.onOpen?.(version.boardID)}
-          >
-            {active() ? props.current : props.open} · {version.boardName}
-          </ButtonV2>
-        )
-      }}
-    </Show>
+    <div class="flex flex-wrap gap-1.5">
+      <Show
+        when={props.version}
+        fallback={<span class="text-[11px] text-v2-text-text-muted">{props.applied}</span>}
+        keyed
+      >
+        {(version) => {
+          const active = () => version.boardID === props.activeBoardID
+          return (
+            <ButtonV2
+              data-action="whiteboard-chat-open-version"
+              variant="ghost-muted"
+              size="small"
+              disabled={active() || !props.onOpen}
+              title={version.boardName}
+              onClick={() => props.onOpen?.(version.boardID)}
+            >
+              {active() ? props.current : props.open} · {version.boardName}
+            </ButtonV2>
+          )
+        }}
+      </Show>
+      <Show when={props.build && props.onBuild}>
+        <ButtonV2
+          data-action="whiteboard-chat-build-demo"
+          variant="neutral"
+          size="small"
+          disabled={props.buildDisabled}
+          title={props.buildHint}
+          onClick={() => void props.onBuild?.()}
+        >
+          {props.build}
+        </ButtonV2>
+      </Show>
+    </div>
   )
 }
 

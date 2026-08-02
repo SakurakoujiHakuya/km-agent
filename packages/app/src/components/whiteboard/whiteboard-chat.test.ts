@@ -5,6 +5,7 @@ import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
   whiteboardChatContext,
   whiteboardChatActiveDraftID,
+  whiteboardChatBuildable,
   whiteboardChatCanCompose,
   whiteboardChatDisplayText,
   whiteboardChatEditableProposal,
@@ -139,6 +140,35 @@ describe("whiteboard AI chat", () => {
     expect(whiteboardChatCanCompose(false, true, false)).toBeFalse()
     expect(whiteboardChatCanCompose(true, true, true)).toBeFalse()
     expect(whiteboardChatCanCompose(false, true, true, true)).toBeFalse()
+  })
+
+  test("offers demo builds only for complete validated whiteboard proposals", () => {
+    const proposal = {
+      format: "km-agent-whiteboard" as const,
+      version: 1 as const,
+      title: "Playable puzzle",
+      nodes: [{ id: "start", type: "start" as const, label: "Start", column: 0, row: 0 }],
+      connections: [],
+      notes: [],
+    }
+    expect(whiteboardChatBuildable({ id: "proposal", role: "assistant", text: "", proposal })).toBeTrue()
+    expect(
+      whiteboardChatBuildable({
+        id: "complete-draft",
+        role: "assistant",
+        text: "",
+        draft: { complete: true, eventCount: 2, proposal },
+      }),
+    ).toBeTrue()
+    expect(
+      whiteboardChatBuildable({
+        id: "partial-draft",
+        role: "assistant",
+        text: "",
+        draft: { complete: false, eventCount: 1, proposal },
+      }),
+    ).toBeFalse()
+    expect(whiteboardChatBuildable({ id: "text", role: "assistant", text: "Looks good" })).toBeFalse()
   })
 
   test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {
