@@ -24,6 +24,10 @@ import {
 } from "./whiteboard-playtest"
 import type { WhiteboardHandoffIntent } from "./whiteboard-prompt"
 import { parseWhiteboardProposal, whiteboardProposalElements } from "./whiteboard-proposal"
+import {
+  reviewWhiteboardProposal,
+  type WhiteboardProposalReview,
+} from "./whiteboard-proposal-review"
 import { inspectWhiteboardScene, type WhiteboardSceneScope, type WhiteboardSceneSummary } from "./whiteboard-scene"
 import {
   whiteboardTemplate,
@@ -88,9 +92,11 @@ export default function WhiteboardDialog(props: {
     chatAutoApply: true,
     chatApplied: [] as string[],
     chatAutoAttempted: [] as string[],
+    chatReviews: {} as Record<string, WhiteboardProposalReview | undefined>,
     playtest: undefined as WhiteboardSceneSummary | undefined,
     playtestPath: [] as WhiteboardPlaytestStep[],
     diagnostics: inspectWhiteboardScene([]),
+    sceneVersion: 0,
     error: "",
   })
   const copy = createMemo(() =>
@@ -249,6 +255,10 @@ export default function WhiteboardDialog(props: {
     () => state.workspace.boards.find((board) => board.id === state.workspace.active) ?? state.workspace.boards[0],
   )
   const activeBoardStorageKey = () => whiteboardBoardStorageKey(props.storageKey, state.workspace.active)
+  const currentScene = createMemo(() => {
+    state.sceneVersion
+    return state.handle?.summarizeScene()
+  })
   const structureStatus = createMemo(() => {
     const diagnostics = state.diagnostics
     if (diagnostics.elementCount === 0) return copy().emptyBoard
@@ -289,13 +299,17 @@ export default function WhiteboardDialog(props: {
       theme: theme.mode(),
       onReady: (handle) => {
         mountedHandle = handle
-        setState({ handle, loading: false, diagnostics: handle.inspectScene() })
+        setState({ handle, loading: false, diagnostics: handle.inspectScene(), sceneVersion: state.sceneVersion + 1 })
         applyInitialTemplate(handle)
       },
       onSelectionChange: (count) => setState("selectionCount", count),
       onSaved: () => {
         if (savedTimer !== undefined) window.clearTimeout(savedTimer)
-        setState({ saved: true, diagnostics: state.handle?.inspectScene() ?? inspectWhiteboardScene([]) })
+        setState({
+          saved: true,
+          diagnostics: state.handle?.inspectScene() ?? inspectWhiteboardScene([]),
+          sceneVersion: state.sceneVersion + 1,
+        })
         savedTimer = window.setTimeout(() => setState("saved", false), 1600)
       },
     }).catch((error: unknown) =>
@@ -379,6 +393,9 @@ export default function WhiteboardDialog(props: {
     const value = message.proposal ?? parseWhiteboardProposal(message.text)
     const handle = mountedHandle
     if (!value || !handle || state.chatApplied.includes(message.id)) return false
+    if (!state.chatReviews[message.id]) {
+      setState("chatReviews", message.id, reviewWhiteboardProposal(handle.summarizeScene(), value))
+    }
     if (target === "current") {
       handle.replaceWith(whiteboardProposalElements(value))
       setState({
@@ -436,6 +453,7 @@ export default function WhiteboardDialog(props: {
       confirmDeleteBoard: "",
       selectionCount: 0,
       diagnostics: state.handle?.inspectScene() ?? inspectWhiteboardScene([]),
+      sceneVersion: state.sceneVersion + 1,
       error: "",
     })
   }
@@ -990,6 +1008,8 @@ export default function WhiteboardDialog(props: {
             working={!!props.chatWorking}
             sending={state.chatSending}
             applied={state.chatApplied}
+            scene={currentScene()}
+            reviews={state.chatReviews}
             autoApply={state.chatAutoApply}
             disabledReason={props.onChatSend ? undefined : copy().chatUnavailable}
             onAutoApplyChange={(value) => setState("chatAutoApply", value)}
