@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { WhiteboardProposal } from "./whiteboard-proposal"
-import { reviewWhiteboardProposal } from "./whiteboard-proposal-review"
+import { reviewWhiteboardProposal, whiteboardProposalRepairPrompt } from "./whiteboard-proposal-review"
 import type { WhiteboardSceneSummary } from "./whiteboard-scene"
 
 const current = {
@@ -52,6 +52,7 @@ describe("AI whiteboard proposal review", () => {
       disconnected: [],
       unreachable: [],
       incompleteDecisions: [],
+      ambiguousDecisions: [],
       unexpectedDeadEnds: [],
       terminalFailures: [],
     })
@@ -74,12 +75,44 @@ describe("AI whiteboard proposal review", () => {
       notes: [],
     } satisfies WhiteboardProposal
 
-    expect(reviewWhiteboardProposal({ nodes: [], connections: [], notes: [] }, unsafe).flow).toMatchObject({
+    const review = reviewWhiteboardProposal({ nodes: [], connections: [], notes: [] }, unsafe)
+    expect(review.flow).toMatchObject({
       disconnected: ["Unreachable exit", "Game over"],
       unreachable: ["Unreachable exit", "Game over"],
       incompleteDecisions: ["One-way choice"],
+      ambiguousDecisions: [],
       unexpectedDeadEnds: ["Stuck corridor"],
       terminalFailures: ["Game over"],
     })
+    expect(whiteboardProposalRepairPrompt(review, false)).toBe(
+      [
+        "Fix the flow risks in the current board while preserving its gameplay intent and every valid node, connection, and design note. Make only the changes needed to resolve these issues:",
+        "- Disconnected nodes: Unreachable exit (+1 more)",
+        "- Decisions with fewer than two exits: One-way choice",
+        "- Unexpected dead ends: Stuck corridor",
+        "- Failures without a retry exit: Game over",
+        "Give every decision clear distinct exits, prevent non-terminal paths from ending unexpectedly, and provide understandable retry or recovery paths for failures.",
+      ].join("\n"),
+    )
+    expect(whiteboardProposalRepairPrompt(review, false)!.length).toBeLessThanOrEqual(800)
+  })
+
+  test("does not offer a repair turn for a healthy proposal", () => {
+    expect(whiteboardProposalRepairPrompt(reviewWhiteboardProposal(current, proposal), true)).toBeUndefined()
+  })
+
+  test("flags decision exits that are missing or repeat their player-facing condition", () => {
+    const ambiguous = {
+      ...proposal,
+      connections: [
+        { from: "start", to: "choice" },
+        { from: "choice", to: "hint", label: "Choose" },
+        { from: "choice", to: "end", label: " choose " },
+      ],
+    } satisfies WhiteboardProposal
+    const review = reviewWhiteboardProposal(current, ambiguous)
+
+    expect(review.flow.ambiguousDecisions).toEqual(["Choose plate"])
+    expect(whiteboardProposalRepairPrompt(review, true)).toContain("出口条件不清晰的判定: Choose plate")
   })
 })

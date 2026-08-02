@@ -778,6 +778,29 @@ export default function WhiteboardDialog(props: {
     return handoff("all", source, "implement", props.onBuild)
   }
 
+  const repairChatProposal = async (message: WhiteboardChatMessage, request: string) => {
+    const proposal = whiteboardChatEditableProposal(message)
+    if (
+      !proposal ||
+      !request.trim() ||
+      !props.onChatSend ||
+      props.chatWorking ||
+      state.chatSending ||
+      state.exporting ||
+      state.importing
+    )
+      return false
+
+    const version = chatVersions()[message.id]
+    if (version) {
+      if (version.boardID !== state.workspace.active) switchBoard(version.boardID)
+    } else {
+      if (!applyChatProposal(message, "revision")) return false
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    }
+    return sendChat(request, "all")
+  }
+
   const sendChat = async (request: string, scope: WhiteboardSceneScope) => {
     const handle = state.handle
     if (!handle || !props.onChatSend || state.chatSending || (props.chatWorking && !props.chatCanStop)) return false
@@ -1178,6 +1201,7 @@ export default function WhiteboardDialog(props: {
             onSend={sendChat}
             onStop={props.onChatStop}
             onApply={applyChatProposal}
+            onRepair={props.onChatSend ? repairChatProposal : undefined}
             onBuild={props.onBuild ? buildChatProposal : undefined}
             onOpenVersion={switchBoard}
             onClose={() => setState("chatOpen", false)}

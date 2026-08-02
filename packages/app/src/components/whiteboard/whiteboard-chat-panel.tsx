@@ -11,7 +11,11 @@ import {
   type WhiteboardChatMessage,
 } from "./whiteboard-chat"
 import type { WhiteboardProposal } from "./whiteboard-proposal"
-import { reviewWhiteboardProposal, type WhiteboardProposalReview } from "./whiteboard-proposal-review"
+import {
+  reviewWhiteboardProposal,
+  whiteboardProposalRepairPrompt,
+  type WhiteboardProposalReview,
+} from "./whiteboard-proposal-review"
 import type { WhiteboardSceneScope, WhiteboardSceneSummary } from "./whiteboard-scene"
 import type { WhiteboardChatVersion } from "./whiteboard-workspace"
 
@@ -34,6 +38,7 @@ export function WhiteboardChatPanel(props: {
   onSend: (request: string, scope: WhiteboardSceneScope) => Promise<boolean | void>
   onStop?: () => Promise<boolean | void> | boolean | void
   onApply: (message: WhiteboardChatMessage, target: "revision" | "current") => void
+  onRepair?: (message: WhiteboardChatMessage, request: string) => Promise<boolean | void> | boolean | void
   onBuild?: (message: WhiteboardChatMessage) => Promise<boolean | void> | boolean | void
   onOpenVersion?: (boardID: string) => void
   onClose: () => void
@@ -219,6 +224,8 @@ export function WhiteboardChatPanel(props: {
                               proposal={draft.proposal}
                               current={props.scene}
                               review={props.reviews?.[message.id]}
+                              repairDisabled={pending() || !!props.building || !canCompose()}
+                              onRepair={props.onRepair ? (request) => props.onRepair?.(message, request) : undefined}
                             />
                             <Show
                               when={!props.applied.includes(message.id)}
@@ -286,6 +293,8 @@ export function WhiteboardChatPanel(props: {
                         proposal={message.proposal!}
                         current={props.scene}
                         review={props.reviews?.[message.id]}
+                        repairDisabled={pending() || !!props.building || !canCompose()}
+                        onRepair={props.onRepair ? (request) => props.onRepair?.(message, request) : undefined}
                       />
                       <Show
                         when={!props.applied.includes(message.id)}
@@ -503,6 +512,8 @@ function ProposalReview(props: {
   proposal: WhiteboardProposal
   current?: WhiteboardSceneSummary
   review?: WhiteboardProposalReview
+  repairDisabled?: boolean
+  onRepair?: (request: string) => Promise<boolean | void> | boolean | void
 }) {
   const value = createMemo(
     () => props.review ?? (props.current ? reviewWhiteboardProposal(props.current, props.proposal) : undefined),
@@ -525,8 +536,11 @@ function ProposalReview(props: {
           disconnected: "孤立节点",
           unreachable: "不可达节点",
           incompleteDecisions: "不足两个出口的判定",
+          ambiguousDecisions: "出口条件不清晰的判定",
           unexpectedDeadEnds: "意外断头路",
           terminalFailures: "无重试出口的失败",
+          repair: "让 AI 修复",
+          repairHint: "打开此方案的安全版本，并让 AI 继续修复检测到的流程风险",
         }
       : {
           changes: "Compared with current board",
@@ -544,8 +558,11 @@ function ProposalReview(props: {
           disconnected: "Disconnected nodes",
           unreachable: "Unreachable nodes",
           incompleteDecisions: "Decisions with fewer than two exits",
+          ambiguousDecisions: "Decisions with unclear exit labels",
           unexpectedDeadEnds: "Unexpected dead ends",
           terminalFailures: "Failures without a retry exit",
+          repair: "Ask AI to fix",
+          repairHint: "Open this proposal's safe version and ask AI to repair the detected flow risks",
         },
   )
   const issues = createMemo(() => {
@@ -560,9 +577,14 @@ function ProposalReview(props: {
         props.chinese,
       ),
       proposalIssue(copy().incompleteDecisions, review.flow.incompleteDecisions, props.chinese),
+      proposalIssue(copy().ambiguousDecisions, review.flow.ambiguousDecisions, props.chinese),
       proposalIssue(copy().unexpectedDeadEnds, review.flow.unexpectedDeadEnds, props.chinese),
       proposalIssue(copy().terminalFailures, review.flow.terminalFailures, props.chinese),
     ].filter((issue) => !!issue)
+  })
+  const repairRequest = createMemo(() => {
+    const review = value()
+    return review ? whiteboardProposalRepairPrompt(review, props.chinese) : undefined
   })
 
   return (
@@ -612,6 +634,19 @@ function ProposalReview(props: {
             }
           >
             <For each={issues()}>{(issue) => <div>⚠ {issue}</div>}</For>
+          </Show>
+          <Show when={repairRequest() && props.onRepair}>
+            <ButtonV2
+              data-action="whiteboard-chat-repair-risks"
+              variant="ghost-muted"
+              size="small"
+              disabled={props.repairDisabled}
+              title={copy().repairHint}
+              onClick={() => void props.onRepair?.(repairRequest()!)}
+            >
+              <IconV2 name="reset" size="small" />
+              {copy().repair}
+            </ButtonV2>
           </Show>
         </div>
       )}
