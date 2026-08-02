@@ -6,6 +6,7 @@ export const WHITEBOARD_BOARD_CHAT_REQUEST_MAX_COUNT = 32
 export type WhiteboardBoard = {
   id: string
   name: string
+  aiStatus?: "generating" | "ready"
   chatMessageIDs?: string[]
   chatRequestIDs?: string[]
   sourceBoardID?: string
@@ -70,10 +71,12 @@ export function parseWhiteboardWorkspace(value: string | null, chinese: boolean)
                 return true
               })
           : []
+        const aiStatus = whiteboardBoardAIStatus(board.aiStatus)
         return [
           {
             id: board.id,
             name: whiteboardBoardName(board.name, chinese ? "未命名白板" : "Untitled board"),
+            ...(aiStatus ? { aiStatus } : {}),
             ...(chatMessageIDs.length > 0 ? { chatMessageIDs } : {}),
             ...(chatRequestIDs.length > 0 ? { chatRequestIDs } : {}),
             ...(typeof board.sourceBoardID === "string" && boardId.test(board.sourceBoardID)
@@ -124,6 +127,54 @@ export function renameWhiteboardBoard(workspace: WhiteboardWorkspace, id: string
   const next = whiteboardBoardName(name, current.name)
   if (next === current.name) return workspace
   return { ...workspace, boards: workspace.boards.map((board) => (board.id === id ? { ...board, name: next } : board)) }
+}
+
+export function renameWhiteboardBoardUnique(workspace: WhiteboardWorkspace, id: string, name: string) {
+  const current = workspace.boards.find((board) => board.id === id)
+  if (!current) return workspace
+  const base = whiteboardBoardName(name, current.name)
+  const used = new Set(workspace.boards.filter((board) => board.id !== id).map((board) => board.name))
+  if (!used.has(base)) return renameWhiteboardBoard(workspace, id, base)
+  for (let index = 2; index <= WHITEBOARD_BOARD_MAX_COUNT + 1; index += 1) {
+    const suffix = ` · ${index}`
+    const candidate = `${base.slice(0, WHITEBOARD_BOARD_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`
+    if (!used.has(candidate)) return renameWhiteboardBoard(workspace, id, candidate)
+  }
+  return workspace
+}
+
+export function setWhiteboardBoardAIStatus(
+  workspace: WhiteboardWorkspace,
+  id: string,
+  status?: WhiteboardBoard["aiStatus"],
+): WhiteboardWorkspace {
+  const current = workspace.boards.find((board) => board.id === id)
+  if (!current || current.aiStatus === status) return workspace
+  return {
+    ...workspace,
+    boards: workspace.boards.map((board) => {
+      if (board.id !== id) return board
+      const { aiStatus: _, ...rest } = board
+      return status ? { ...rest, aiStatus: status } : rest
+    }),
+  }
+}
+
+export function whiteboardAIRevisionStatus(active: boolean, finished: boolean): WhiteboardBoard["aiStatus"] {
+  if (!finished) return "generating"
+  return active ? undefined : "ready"
+}
+
+export function whiteboardAIRevisionShouldFocus(
+  sourceBoardID: string,
+  currentBoardID: string,
+  sourceNavigationVersion: number | undefined,
+  currentNavigationVersion: number,
+) {
+  return (
+    sourceBoardID === currentBoardID &&
+    (sourceNavigationVersion === undefined || sourceNavigationVersion === currentNavigationVersion)
+  )
 }
 
 export function linkWhiteboardChatMessage(
@@ -234,6 +285,10 @@ export function whiteboardBoardStorageKey(storageKey: string, id: string) {
 function whiteboardBoardName(value: unknown, fallback: string) {
   if (typeof value !== "string") return fallback
   return value.replaceAll(/\s+/g, " ").trim().slice(0, WHITEBOARD_BOARD_NAME_MAX_LENGTH) || fallback
+}
+
+function whiteboardBoardAIStatus(value: unknown): WhiteboardBoard["aiStatus"] {
+  return value === "generating" || value === "ready" ? value : undefined
 }
 
 function whiteboardChatMessageID(value: unknown): value is string {

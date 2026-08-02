@@ -8,12 +8,17 @@ import {
   parseWhiteboardWorkspace,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
+  renameWhiteboardBoardUnique,
+  setWhiteboardBoardAIStatus,
   WHITEBOARD_BOARD_MAX_COUNT,
+  WHITEBOARD_BOARD_NAME_MAX_LENGTH,
   whiteboardBoardStorageKey,
   whiteboardChatVersions,
   whiteboardChatRequestTargets,
   whiteboardWorkspaceStorageKey,
   unlinkWhiteboardChatRequest,
+  whiteboardAIRevisionStatus,
+  whiteboardAIRevisionShouldFocus,
 } from "./whiteboard-workspace"
 
 describe("multi-board whiteboard workspace", () => {
@@ -117,6 +122,40 @@ describe("multi-board whiteboard workspace", () => {
     expect(whiteboardChatRequestTargets(removeWhiteboardBoard(resolved, "draft"))).toEqual({ msg_main: "main" })
   })
 
+  test("persists only valid AI board attention and clears it after review", () => {
+    const parsed = parseWhiteboardWorkspace(
+      JSON.stringify({
+        version: 1,
+        active: "main",
+        boards: [
+          { id: "main", name: "Main", aiStatus: "invalid" },
+          { id: "draft", name: "Draft", aiStatus: "generating" },
+          { id: "ready", name: "Ready", aiStatus: "ready" },
+        ],
+      }),
+      false,
+    )
+    expect(parsed.boards).toEqual([
+      { id: "main", name: "Main" },
+      { id: "draft", name: "Draft", aiStatus: "generating" },
+      { id: "ready", name: "Ready", aiStatus: "ready" },
+    ])
+    const completed = setWhiteboardBoardAIStatus(parsed, "draft", "ready")
+    expect(completed.boards[1]?.aiStatus).toBe("ready")
+    const reviewed = setWhiteboardBoardAIStatus(completed, "draft")
+    expect(reviewed.boards[1]?.aiStatus).toBeUndefined()
+    expect(setWhiteboardBoardAIStatus(reviewed, "draft")).toBe(reviewed)
+    expect(setWhiteboardBoardAIStatus(reviewed, "missing", "ready")).toBe(reviewed)
+    expect(whiteboardAIRevisionStatus(true, false)).toBe("generating")
+    expect(whiteboardAIRevisionStatus(false, false)).toBe("generating")
+    expect(whiteboardAIRevisionStatus(false, true)).toBe("ready")
+    expect(whiteboardAIRevisionStatus(true, true)).toBeUndefined()
+    expect(whiteboardAIRevisionShouldFocus("source", "source", 4, 4)).toBeTrue()
+    expect(whiteboardAIRevisionShouldFocus("source", "source", 4, 5)).toBeFalse()
+    expect(whiteboardAIRevisionShouldFocus("source", "other", 4, 4)).toBeFalse()
+    expect(whiteboardAIRevisionShouldFocus("source", "source", undefined, 5)).toBeTrue()
+  })
+
   test("sanitizes revision sources and reparents descendants when a source version is removed", () => {
     const parsed = parseWhiteboardWorkspace(
       JSON.stringify({
@@ -159,6 +198,35 @@ describe("multi-board whiteboard workspace", () => {
     expect(activateWhiteboardBoard(renamed, "main").active).toBe("main")
     expect(removeWhiteboardBoard(renamed, "puzzle")).toEqual(initial)
     expect(removeWhiteboardBoard(initial, "main")).toBe(initial)
+  })
+
+  test("gives repeated AI revision titles stable readable suffixes", () => {
+    const workspace = {
+      version: 1 as const,
+      active: "revision-3",
+      boards: [
+        { id: "main", name: "Timed escape" },
+        { id: "revision-2", name: "Timed escape · 2" },
+        { id: "revision-3", name: "AI draft" },
+      ],
+    }
+    expect(renameWhiteboardBoardUnique(workspace, "revision-3", "Timed escape").boards[2]?.name).toBe(
+      "Timed escape · 3",
+    )
+    const long = "A".repeat(WHITEBOARD_BOARD_NAME_MAX_LENGTH)
+    const collision = renameWhiteboardBoardUnique(
+      {
+        ...workspace,
+        boards: [
+          { id: "main", name: long },
+          { id: "revision-2", name: "Draft" },
+        ],
+      },
+      "revision-2",
+      long,
+    )
+    expect(collision.boards[1]?.name).toHaveLength(WHITEBOARD_BOARD_NAME_MAX_LENGTH)
+    expect(collision.boards[1]?.name.endsWith(" · 2")).toBeTrue()
   })
 
   test("enforces a bounded board count and safe scene keys", () => {

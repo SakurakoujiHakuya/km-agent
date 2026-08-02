@@ -60,8 +60,12 @@ import {
   parseWhiteboardWorkspace,
   removeWhiteboardBoard,
   renameWhiteboardBoard,
+  renameWhiteboardBoardUnique,
+  setWhiteboardBoardAIStatus,
   unlinkWhiteboardChatRequest,
   WHITEBOARD_BOARD_MAX_COUNT,
+  whiteboardAIRevisionShouldFocus,
+  whiteboardAIRevisionStatus,
   whiteboardBoardStorageKey,
   whiteboardChatVersions,
   whiteboardChatRequestTargets,
@@ -170,6 +174,10 @@ export default function WhiteboardDialog(props: {
           chatLiveBackground: "AI 正在后台搭建来源白板的新版本，当前白板不会被切换。",
           chatRevisionBackground: "AI 已在后台完成来源白板的新版本，当前白板保持不变。",
           chatSourceMissing: "AI 请求的来源白板已被删除，未自动修改其他白板。",
+          aiGenerating: "AI 生成中",
+          aiReady: "AI 新版本",
+          aiGeneratingShort: "AI…",
+          aiReadyShort: "新",
           chatCurrentApplied: "AI 方案已替换当前白板，可使用撤销恢复。",
           chatVersionDiscarded: "AI 版本已丢弃，已返回来源白板。",
           playtest: "流程试玩",
@@ -245,6 +253,10 @@ export default function WhiteboardDialog(props: {
           chatRevisionBackground:
             "AI finished the source board revision in the background. Your current board is unchanged.",
           chatSourceMissing: "The source board for this AI request was deleted. No other board was changed.",
+          aiGenerating: "AI generating",
+          aiReady: "New AI version",
+          aiGeneratingShort: "AI…",
+          aiReadyShort: "New",
           chatCurrentApplied: "AI replaced the current board. Use Undo to restore it.",
           chatVersionDiscarded: "AI revision discarded. Returned to its source board.",
           playtest: "Flow playtest",
@@ -292,8 +304,14 @@ export default function WhiteboardDialog(props: {
   let mountedHandle: WhiteboardHandle | undefined
   const chatRequestSnapshots = new Map<
     string,
-    { boardID: string; baseline: WhiteboardSceneSummary; decorations: WhiteboardDecorationSnapshot }
+    {
+      boardID: string
+      baseline: WhiteboardSceneSummary
+      decorations: WhiteboardDecorationSnapshot
+      navigationVersion: number
+    }
   >()
+  let boardNavigationVersion = 0
   let importInput: HTMLInputElement | undefined
   let pendingImport: File | undefined
   const activeBoard = createMemo(
@@ -307,6 +325,7 @@ export default function WhiteboardDialog(props: {
   const chatVersions = createMemo(() => whiteboardChatVersions(state.workspace))
   const chatRequestTargets = createMemo(() => whiteboardChatRequestTargets(state.workspace))
   const chatApplied = createMemo(() => Object.keys(chatVersions()))
+  const aiBoardStatuses = createMemo(() => state.workspace.boards.filter((board) => !!board.aiStatus))
   const structureStatus = createMemo(() => {
     const diagnostics = state.diagnostics
     if (diagnostics.elementCount === 0) return copy().emptyBoard
@@ -493,14 +512,16 @@ export default function WhiteboardDialog(props: {
     const name = partial ? `${chinese() ? "AI 草稿" : "AI draft"} · ${value.title}` : value.title
     let workspace = resolveChatRequest(
       linkWhiteboardChatMessage(
-        renameWhiteboardBoard(added, revisionBoardID, name),
+        renameWhiteboardBoardUnique(added, revisionBoardID, name),
         revisionBoardID,
         message.id,
         source.boardID,
       ),
       message,
     )
-    if (currentBoardID === source.boardID) {
+    const focused = chatSourceFocused(source, currentBoardID)
+    workspace = setWhiteboardBoardAIStatus(workspace, revisionBoardID, focused ? undefined : "ready")
+    if (focused) {
       populateNewBoard(
         handle,
         workspace,
@@ -527,9 +548,26 @@ export default function WhiteboardDialog(props: {
     const handle = mountedHandle
     if (!draft || !handle) return false
     const signature = `${draft.complete}:${JSON.stringify(draft.proposal)}`
+    const finished = draft.complete || !props.chatWorking
     if (state.chatLiveMessage === message.id && state.chatLiveSignature === signature) {
-      const workspace = resolveChatRequest(state.workspace, message)
+      let workspace = resolveChatRequest(state.workspace, message)
+      const active = state.workspace.active === state.chatLiveBoard
+      workspace = setWhiteboardBoardAIStatus(
+        workspace,
+        state.chatLiveBoard,
+        whiteboardAIRevisionStatus(active, finished),
+      )
       if (workspace !== state.workspace) saveWorkspace(workspace)
+      if (finished) {
+        setState({
+          chatLiveMessage: "",
+          chatLiveBoard: "",
+          chatLiveSignature: "",
+          chatAutoAttempted: state.chatAutoAttempted.includes(message.id)
+            ? state.chatAutoAttempted
+            : [...state.chatAutoAttempted, message.id],
+        })
+      }
       return false
     }
 
@@ -559,23 +597,24 @@ export default function WhiteboardDialog(props: {
       const name = draft.complete
         ? draft.proposal.title
         : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
-      const workspace = resolveChatRequest(
+      let workspace = resolveChatRequest(
         linkWhiteboardChatMessage(
-          renameWhiteboardBoard(state.workspace, existing, name),
+          renameWhiteboardBoardUnique(state.workspace, existing, name),
           existing,
           message.id,
           source.boardID,
         ),
         message,
       )
+      workspace = setWhiteboardBoardAIStatus(workspace, existing, whiteboardAIRevisionStatus(active, finished))
       if (workspace !== state.workspace) saveWorkspace(workspace)
       setState({
-        chatLiveMessage: message.id,
-        chatLiveBoard: existing,
-        chatLiveSignature: signature,
+        chatLiveMessage: finished ? "" : message.id,
+        chatLiveBoard: finished ? "" : existing,
+        chatLiveSignature: finished ? "" : signature,
         chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
         chatReviews: { ...state.chatReviews, [message.id]: review },
-        chatAutoAttempted: draft.complete
+        chatAutoAttempted: finished
           ? [...state.chatAutoAttempted.filter((id) => id !== message.id), message.id]
           : state.chatAutoAttempted,
       })
@@ -598,22 +637,24 @@ export default function WhiteboardDialog(props: {
       : `${chinese() ? "AI 草稿" : "AI draft"} · ${draft.proposal.title}`
     let workspace = resolveChatRequest(
       linkWhiteboardChatMessage(
-        renameWhiteboardBoard(added, revisionBoardID, name),
+        renameWhiteboardBoardUnique(added, revisionBoardID, name),
         revisionBoardID,
         message.id,
         source.boardID,
       ),
       message,
     )
+    const focused = chatSourceFocused(source, currentBoardID)
+    workspace = setWhiteboardBoardAIStatus(workspace, revisionBoardID, whiteboardAIRevisionStatus(focused, finished))
     setState({
       chatBaselines: { ...state.chatBaselines, [message.id]: baseline },
       chatReviews: { ...state.chatReviews, [message.id]: review },
-      chatLiveMessage: message.id,
-      chatLiveBoard: revisionBoardID,
-      chatLiveSignature: signature,
+      chatLiveMessage: finished ? "" : message.id,
+      chatLiveBoard: finished ? "" : revisionBoardID,
+      chatLiveSignature: finished ? "" : signature,
       chatAutoAttempted: [...state.chatAutoAttempted, message.id],
     })
-    if (currentBoardID === source.boardID) {
+    if (focused) {
       populateNewBoard(
         handle,
         workspace,
@@ -707,6 +748,9 @@ export default function WhiteboardDialog(props: {
     }
   }
 
+  const chatSourceFocused = (source: { boardID: string; navigationVersion?: number }, currentBoardID: string) =>
+    whiteboardAIRevisionShouldFocus(source.boardID, currentBoardID, source.navigationVersion, boardNavigationVersion)
+
   const resolveChatRequest = (workspace: typeof state.workspace, message: WhiteboardChatMessage) => {
     if (!message.requestID || !whiteboardChatRequestFinished(message, !!props.chatWorking)) return workspace
     chatRequestSnapshots.delete(message.requestID)
@@ -745,8 +789,19 @@ export default function WhiteboardDialog(props: {
   }
 
   const switchBoard = (id: string) => {
-    const workspace = activateWhiteboardBoard(state.workspace, id)
-    if (workspace === state.workspace || state.exporting || state.importing) return
+    if (state.exporting || state.importing) return
+    let workspace = activateWhiteboardBoard(state.workspace, id)
+    if (workspace.boards.find((board) => board.id === id)?.aiStatus === "ready") {
+      workspace = setWhiteboardBoardAIStatus(workspace, id)
+    }
+    if (workspace === state.workspace) return
+    if (workspace.active !== state.workspace.active) {
+      boardNavigationVersion += 1
+      if (sceneSwitchFrame !== undefined) {
+        window.cancelAnimationFrame(sceneSwitchFrame)
+        sceneSwitchFrame = undefined
+      }
+    }
     state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
     saveWorkspace(workspace)
     setState({ playtest: undefined, playtestPath: [] })
@@ -766,6 +821,11 @@ export default function WhiteboardDialog(props: {
     if (wasActive) workspace = activateWhiteboardBoard(workspace, version.sourceBoardID)
     if (workspace === state.workspace) return false
     if (workspace.active !== state.workspace.active) {
+      boardNavigationVersion += 1
+      if (sceneSwitchFrame !== undefined) {
+        window.cancelAnimationFrame(sceneSwitchFrame)
+        sceneSwitchFrame = undefined
+      }
       state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
     }
     removeWhiteboardScene(props.storageKey, version.boardID)
@@ -785,6 +845,11 @@ export default function WhiteboardDialog(props: {
     }
     const workspace = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
     if (workspace === state.workspace) return
+    boardNavigationVersion += 1
+    if (sceneSwitchFrame !== undefined) {
+      window.cancelAnimationFrame(sceneSwitchFrame)
+      sceneSwitchFrame = undefined
+    }
     state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
     saveWorkspace(workspace)
     setState({ playtest: undefined, playtestPath: [] })
@@ -813,6 +878,11 @@ export default function WhiteboardDialog(props: {
     }
     if (deleteBoardTimer !== undefined) window.clearTimeout(deleteBoardTimer)
     const workspace = removeWhiteboardBoard(state.workspace, id)
+    boardNavigationVersion += 1
+    if (sceneSwitchFrame !== undefined) {
+      window.cancelAnimationFrame(sceneSwitchFrame)
+      sceneSwitchFrame = undefined
+    }
     state.handle?.switchScene(whiteboardBoardStorageKey(props.storageKey, workspace.active))
     removeWhiteboardScene(props.storageKey, id)
     saveWorkspace(workspace)
@@ -1002,7 +1072,12 @@ export default function WhiteboardDialog(props: {
     ]
       .filter(Boolean)
       .join("\n\n")
-    chatRequestSnapshots.set(messageID, { boardID: sourceBoardID, baseline, decorations })
+    chatRequestSnapshots.set(messageID, {
+      boardID: sourceBoardID,
+      baseline,
+      decorations,
+      navigationVersion: boardNavigationVersion,
+    })
     saveWorkspace(linkWhiteboardChatRequest(state.workspace, sourceBoardID, messageID))
     setState({ chatSending: true, error: "" })
     const blob = hasContent ? await handle.exportPng(scope).catch(() => undefined) : undefined
@@ -1118,9 +1193,21 @@ export default function WhiteboardDialog(props: {
           size="normal"
           icon="edit"
           disabled={!state.handle || state.exporting || state.importing}
+          title={
+            aiBoardStatuses().some((board) => board.aiStatus === "generating")
+              ? copy().aiGenerating
+              : aiBoardStatuses().length > 0
+                ? copy().aiReady
+                : undefined
+          }
           onClick={() => setState("chatOpen", !state.chatOpen)}
         >
           {copy().chat}
+          <Show when={aiBoardStatuses().length > 0}>
+            <span class="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-v2-background-bg-accent px-1 text-[10px] text-v2-text-text-strong">
+              {aiBoardStatuses().length}
+            </span>
+          </Show>
         </ButtonV2>
         <ButtonV2
           data-action="whiteboard-export-file"
@@ -1229,9 +1316,28 @@ export default function WhiteboardDialog(props: {
                 variant={state.workspace.active === board.id ? "neutral" : "ghost-muted"}
                 size="small"
                 disabled={!state.handle || state.exporting || state.importing}
+                title={
+                  board.aiStatus === "generating"
+                    ? `${board.name} · ${copy().aiGenerating}`
+                    : board.aiStatus === "ready"
+                      ? `${board.name} · ${copy().aiReady}`
+                      : board.name
+                }
                 onClick={() => switchBoard(board.id)}
               >
-                {board.name}
+                <span class="max-w-52 truncate">{board.name}</span>
+                <Show when={board.aiStatus === "generating"}>
+                  <span class="ml-1 inline-flex items-center gap-1 text-[10px] text-v2-text-text-accent">
+                    <span class="size-1.5 animate-pulse rounded-full bg-v2-background-bg-accent" />
+                    {copy().aiGeneratingShort}
+                  </span>
+                </Show>
+                <Show when={board.aiStatus === "ready"}>
+                  <span class="ml-1 inline-flex items-center gap-1 text-[10px] text-v2-text-text-accent">
+                    <span class="size-1.5 rounded-full bg-v2-background-bg-accent" />
+                    {copy().aiReadyShort}
+                  </span>
+                </Show>
               </ButtonV2>
             )}
           </For>
