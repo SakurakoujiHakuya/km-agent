@@ -5,6 +5,7 @@ import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
   whiteboardChatContext,
   whiteboardChatActiveDraftID,
+  whiteboardChatCanCompose,
   whiteboardChatDisplayText,
   whiteboardChatEditableProposal,
   whiteboardChatPrompt,
@@ -130,6 +131,14 @@ describe("whiteboard AI chat", () => {
   test("recognizes a whiteboard request before the assistant starts streaming", () => {
     const messages = [{ id: "request", role: "user" as const, text: "Add a retry" }]
     expect(whiteboardChatTurnWorking(messages, "request", true)).toBeTrue()
+  })
+
+  test("allows live steering only while the current work belongs to the whiteboard", () => {
+    expect(whiteboardChatCanCompose(false, false, false)).toBeTrue()
+    expect(whiteboardChatCanCompose(false, true, true)).toBeTrue()
+    expect(whiteboardChatCanCompose(false, true, false)).toBeFalse()
+    expect(whiteboardChatCanCompose(true, true, true)).toBeFalse()
+    expect(whiteboardChatCanCompose(false, true, true, true)).toBeFalse()
   })
 
   test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {

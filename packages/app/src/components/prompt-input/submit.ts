@@ -48,6 +48,7 @@ type FollowupSendInput = {
   messageID?: string
   optimisticBusy?: boolean
   syntheticText?: string
+  delivery?: "steer" | "queue"
   before?: () => Promise<boolean> | boolean
 }
 
@@ -168,6 +169,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     await input.api.prompt({
       sessionID: input.draft.sessionID,
       id: messageID,
+      delivery: input.delivery,
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,

@@ -371,6 +371,7 @@ export function SessionHeader() {
       serverSync: serverSync(),
       sync: sync(),
       optimisticBusy: true,
+      delivery: "steer",
       draft: {
         sessionID,
         sessionDirectory: sdk().directory,

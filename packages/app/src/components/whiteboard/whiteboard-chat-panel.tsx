@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import {
   WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
   whiteboardChatActiveDraftID,
+  whiteboardChatCanCompose,
   whiteboardChatDisplayText,
   type WhiteboardChatMessage,
 } from "./whiteboard-chat"
@@ -47,9 +48,11 @@ export function WhiteboardChatPanel(props: {
           empty: "试试让 AI 补全关卡流程、增加失败反馈，或检查谜题软锁。",
           placeholder: "例如：增加一条可恢复的失败分支，并保留现有主流程",
           send: "发送",
+          steer: "发送调整",
           stop: "停止生成",
           stopping: "正在停止…",
           thinking: "AI 正在调整当前白板…",
+          steering: "AI 正在调整；可继续输入来实时引导。",
           busy: "当前任务正在运行，结束后可继续共创。",
           streaming: "正在实时搭建",
           partial: "已停止的部分草稿",
@@ -74,9 +77,11 @@ export function WhiteboardChatPanel(props: {
           empty: "Ask AI to complete the level flow, add failure feedback, or check the puzzle for soft locks.",
           placeholder: "For example: add a recoverable failure branch while preserving the main flow",
           send: "Send",
+          steer: "Steer",
           stop: "Stop generating",
           stopping: "Stopping…",
           thinking: "AI is adjusting the current board…",
+          steering: "AI is adjusting the board. Keep typing to steer it live.",
           busy: "Another task is running. Continue co-editing when it finishes.",
           streaming: "Building live",
           partial: "Stopped partial draft",
@@ -98,6 +103,10 @@ export function WhiteboardChatPanel(props: {
   )
   const pending = createMemo(() => props.sending || props.working)
   const stoppable = createMemo(() => props.sending || props.canStop)
+  const steering = createMemo(() => props.working && props.canStop)
+  const canCompose = createMemo(() =>
+    whiteboardChatCanCompose(props.sending, props.working, props.canStop, state.stopping),
+  )
   const activeDraftID = createMemo(() => whiteboardChatActiveDraftID(props.messages, stoppable()))
   let scroll: HTMLDivElement | undefined
 
@@ -119,7 +128,7 @@ export function WhiteboardChatPanel(props: {
 
   const send = async () => {
     const request = state.input.trim()
-    if (!request || pending() || props.disabledReason) return
+    if (!request || !canCompose() || props.disabledReason) return
     const accepted = await props.onSend(request, state.scope)
     if (accepted === false) return
     setState("input", "")
@@ -294,7 +303,7 @@ export function WhiteboardChatPanel(props: {
         <Show when={pending()}>
           <div class="flex items-center gap-2 text-[11px] text-v2-text-text-muted">
             <span class="size-1.5 animate-pulse rounded-full bg-v2-background-bg-accent" />
-            {stoppable() ? copy().thinking : copy().busy}
+            {steering() ? copy().steering : stoppable() ? copy().thinking : copy().busy}
           </div>
         </Show>
       </div>
@@ -316,7 +325,7 @@ export function WhiteboardChatPanel(props: {
                   ? "bg-v2-background-bg-base text-v2-text-text-strong shadow-xs"
                   : "text-v2-text-text-muted hover:text-v2-text-text-base"
               }`}
-              disabled={pending()}
+              disabled={!canCompose()}
               onClick={() => setState("scope", "all")}
             >
               {copy().all}
@@ -329,7 +338,7 @@ export function WhiteboardChatPanel(props: {
                   ? "bg-v2-background-bg-base text-v2-text-text-strong shadow-xs"
                   : "text-v2-text-text-muted hover:text-v2-text-text-base"
               } disabled:cursor-not-allowed disabled:opacity-45`}
-              disabled={pending() || props.selectionCount === 0}
+              disabled={!canCompose() || props.selectionCount === 0}
               title={props.selectionCount === 0 ? copy().selectionHint : undefined}
               onClick={() => setState("scope", "selection")}
             >
@@ -343,7 +352,7 @@ export function WhiteboardChatPanel(props: {
               <button
                 type="button"
                 class="rounded-full border border-v2-border-border-base bg-v2-background-bg-base px-2 py-1 text-[10px] text-v2-text-text-muted hover:text-v2-text-text-base"
-                disabled={pending() || !!props.disabledReason}
+                disabled={!canCompose() || !!props.disabledReason}
                 onClick={() => setState("input", hint)}
               >
                 {hint}
@@ -358,7 +367,7 @@ export function WhiteboardChatPanel(props: {
           placeholder={copy().placeholder}
           value={state.input}
           maxLength={WHITEBOARD_CHAT_REQUEST_MAX_LENGTH}
-          disabled={pending() || !!props.disabledReason}
+          disabled={!canCompose() || !!props.disabledReason}
           onInput={(event) => setState("input", event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey) return
@@ -370,30 +379,28 @@ export function WhiteboardChatPanel(props: {
           <span class="text-[10px] text-v2-text-text-muted">
             {state.input.length}/{WHITEBOARD_CHAT_REQUEST_MAX_LENGTH} · Enter
           </span>
-          <Show
-            when={pending() && stoppable() && props.onStop}
-            fallback={
+          <div class="flex items-center gap-1.5">
+            <Show when={pending() && stoppable() && props.onStop}>
               <ButtonV2
-                data-action="whiteboard-chat-send"
-                variant="contrast"
+                data-action="whiteboard-chat-stop"
+                variant="ghost-muted"
                 size="small"
-                disabled={!state.input.trim() || pending() || !!props.disabledReason}
-                onClick={() => void send()}
+                disabled={state.stopping}
+                onClick={() => void stop()}
               >
-                {copy().send}
+                {state.stopping ? copy().stopping : copy().stop}
               </ButtonV2>
-            }
-          >
+            </Show>
             <ButtonV2
-              data-action="whiteboard-chat-stop"
+              data-action="whiteboard-chat-send"
               variant="contrast"
               size="small"
-              disabled={state.stopping}
-              onClick={() => void stop()}
+              disabled={!state.input.trim() || !canCompose() || !!props.disabledReason}
+              onClick={() => void send()}
             >
-              {state.stopping ? copy().stopping : copy().stop}
+              {steering() ? copy().steer : copy().send}
             </ButtonV2>
-          </Show>
+          </div>
         </div>
       </div>
     </aside>

@@ -735,7 +735,7 @@ export default function WhiteboardDialog(props: {
 
   const sendChat = async (request: string, scope: WhiteboardSceneScope) => {
     const handle = state.handle
-    if (!handle || !props.onChatSend || state.chatSending || props.chatWorking) return false
+    if (!handle || !props.onChatSend || state.chatSending || (props.chatWorking && !props.chatCanStop)) return false
     if (scope === "selection" && !handle.hasSelection()) {
       setState("error", copy().selectionEmpty)
       return false

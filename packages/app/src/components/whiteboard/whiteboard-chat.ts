@@ -171,6 +171,10 @@ export function whiteboardChatTurnWorking(
   return !!latest.draft && !latest.proposal
 }
 
+export function whiteboardChatCanCompose(sending: boolean, working: boolean, canStop: boolean, stopping = false) {
+  return !sending && !stopping && (!working || canStop)
+}
+
 function whiteboardChatRequest(source: string, tagged: boolean) {
   if (tagged) {
     return (
