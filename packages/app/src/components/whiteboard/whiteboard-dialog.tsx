@@ -1,7 +1,7 @@
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { useTheme } from "@opencode-ai/ui/theme/context"
-import { createMemo, For, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, For, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import {
@@ -11,6 +11,8 @@ import {
   upsertPreviewPlaytestScenario,
 } from "../game-preview-scenarios"
 import { mountExcalidrawWhiteboard, type WhiteboardHandle } from "./excalidraw-bridge"
+import { type WhiteboardChatMessage, type WhiteboardChatSendInput } from "./whiteboard-chat"
+import { WhiteboardChatPanel } from "./whiteboard-chat-panel"
 import { whiteboardDownloadName, whiteboardFileIssue } from "./whiteboard-file"
 import { WhiteboardPlaytestPanel } from "./whiteboard-playtest-panel"
 import {
@@ -48,6 +50,9 @@ export default function WhiteboardDialog(props: {
   initialTemplate?: WhiteboardTemplateId
   initialBoardName?: string
   onInitialTemplateApplied?: () => void
+  chatMessages?: readonly WhiteboardChatMessage[]
+  chatWorking?: boolean
+  onChatSend?: (input: WhiteboardChatSendInput) => boolean | void | Promise<boolean | void>
   onAttach: (
     file: File,
     sceneContext?: string,
@@ -78,6 +83,11 @@ export default function WhiteboardDialog(props: {
     proposalSource: "",
     proposalDraft: "",
     proposalInputOpen: false,
+    chatOpen: false,
+    chatSending: false,
+    chatAutoApply: true,
+    chatApplied: [] as string[],
+    chatAutoAttempted: [] as string[],
     playtest: undefined as WhiteboardSceneSummary | undefined,
     playtestPath: [] as WhiteboardPlaytestStep[],
     diagnostics: inspectWhiteboardScene([]),
@@ -118,6 +128,10 @@ export default function WhiteboardDialog(props: {
           proposalInput: "粘贴包含 km-whiteboard JSON 代码块的 AI 回复",
           parseProposal: "解析方案",
           proposalInvalid: "没有找到有效的 km-whiteboard 方案，请检查格式、节点位置和连接引用。",
+          chat: "AI 共创",
+          chatUnavailable: "发送首条任务后即可在白板内与 AI 实时共创。",
+          chatRevisionApplied: "AI 已生成新的可编辑白板版本，原版本保持不变。",
+          chatCurrentApplied: "AI 方案已替换当前白板，可使用撤销恢复。",
           playtest: "流程试玩",
           playtestEmpty: "至少需要一个矩形、菱形或椭圆节点才能开始流程试玩。",
           scenarioSaved: "已保存为 Demo 预览试玩场景。",
@@ -182,6 +196,10 @@ export default function WhiteboardDialog(props: {
           proposalInput: "Paste an AI response containing a km-whiteboard JSON code block",
           parseProposal: "Parse proposal",
           proposalInvalid: "No valid km-whiteboard proposal was found. Check its format, node positions, and links.",
+          chat: "AI copilot",
+          chatUnavailable: "Send the first task to enable live AI co-editing inside the whiteboard.",
+          chatRevisionApplied: "AI created a new editable board revision. The previous version is unchanged.",
+          chatCurrentApplied: "AI replaced the current board. Use Undo to restore it.",
           playtest: "Flow playtest",
           playtestEmpty: "Add at least one rectangle, diamond, or ellipse node before starting a flow playtest.",
           scenarioSaved: "Saved as a Demo Preview playtest scenario.",
@@ -215,6 +233,7 @@ export default function WhiteboardDialog(props: {
   )
   const templates = createMemo(() => whiteboardTemplates(chinese()))
   const proposal = createMemo(() => parseWhiteboardProposal(state.proposalSource || props.assistantText))
+  const initialChatMessageIDs = new Set((props.chatMessages ?? []).map((message) => message.id))
   let host: HTMLDivElement | undefined
   let savedTimer: number | undefined
   let clearTimer: number | undefined
@@ -244,6 +263,22 @@ export default function WhiteboardDialog(props: {
     ]
       .filter(Boolean)
       .join(" · ")
+  })
+
+  createEffect(() => {
+    if (!state.chatAutoApply || !state.handle) return
+    const message = (props.chatMessages ?? [])
+      .toReversed()
+      .find(
+        (item) =>
+          item.role === "assistant" &&
+          !!item.proposal &&
+          !initialChatMessageIDs.has(item.id) &&
+          !state.chatAutoAttempted.includes(item.id),
+      )
+    if (!message) return
+    setState("chatAutoAttempted", (ids) => [...ids, message.id])
+    applyChatProposal(message, "revision")
   })
 
   onMount(() => {
@@ -327,7 +362,7 @@ export default function WhiteboardDialog(props: {
 
   const applyProposal = () => {
     const value = proposal()
-    const handle = state.handle
+    const handle = mountedHandle
     if (!value || !handle || state.proposalApplied) return
     if (state.workspace.boards.length >= WHITEBOARD_BOARD_MAX_COUNT) {
       setState("error", copy().boardLimit)
@@ -338,6 +373,34 @@ export default function WhiteboardDialog(props: {
     const workspace = renameWhiteboardBoard(added, added.active, value.title)
     populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().proposalApplied)
     setState("proposalApplied", true)
+  }
+
+  function applyChatProposal(message: WhiteboardChatMessage, target: "revision" | "current") {
+    const value = message.proposal ?? parseWhiteboardProposal(message.text)
+    const handle = mountedHandle
+    if (!value || !handle || state.chatApplied.includes(message.id)) return false
+    if (target === "current") {
+      handle.replaceWith(whiteboardProposalElements(value))
+      setState({
+        chatApplied: [...state.chatApplied, message.id],
+        pendingTemplate: undefined,
+        playtest: undefined,
+        playtestPath: [],
+        error: "",
+      })
+      showNotice(copy().chatCurrentApplied)
+      return true
+    }
+    if (state.workspace.boards.length >= WHITEBOARD_BOARD_MAX_COUNT) {
+      setState("error", copy().boardLimit)
+      return false
+    }
+    const added = addWhiteboardBoard(state.workspace, crypto.randomUUID(), chinese())
+    if (added === state.workspace) return false
+    const workspace = renameWhiteboardBoard(added, added.active, value.title)
+    populateNewBoard(handle, workspace, whiteboardProposalElements(value), copy().chatRevisionApplied)
+    setState("chatApplied", [...state.chatApplied, message.id])
+    return true
   }
 
   const parseProposalDraft = () => {
@@ -552,6 +615,34 @@ export default function WhiteboardDialog(props: {
     setState("exporting", false)
   }
 
+  const sendChat = async (request: string) => {
+    const handle = state.handle
+    if (!handle || !props.onChatSend || state.chatSending || props.chatWorking) return false
+    setState({ chatSending: true, error: "" })
+    const blob = handle.hasContent() ? await handle.exportPng().catch(() => undefined) : undefined
+    if (handle.hasContent() && !blob) {
+      setState({ chatSending: false, error: copy().failed })
+      return false
+    }
+    const accepted = await Promise.resolve(
+      props.onChatSend({
+        request,
+        boardName: activeBoard()?.name ?? "",
+        sceneContext: handle.describeScene(chinese()),
+        image: blob
+          ? new File([blob], `km-agent-whiteboard-chat-${new Date().toISOString().replaceAll(":", "-")}.png`, {
+              type: "image/png",
+            })
+          : undefined,
+      }),
+    )
+      .then((value) => value !== false)
+      .catch(() => false)
+    setState("chatSending", false)
+    if (!accepted) setState("error", copy().failed)
+    return accepted
+  }
+
   const openPlaytest = () => {
     const graph = state.handle?.summarizeScene()
     const start = graph ? whiteboardPlaytestStarts(graph)[0] : undefined
@@ -614,6 +705,16 @@ export default function WhiteboardDialog(props: {
         <Show when={state.notice || state.saved}>
           <span class="text-[12px] text-v2-text-text-muted">{state.notice || copy().saved}</span>
         </Show>
+        <ButtonV2
+          data-action="whiteboard-chat-toggle"
+          variant={state.chatOpen ? "neutral" : "ghost-muted"}
+          size="normal"
+          icon="edit"
+          disabled={!state.handle || state.exporting || state.importing}
+          onClick={() => setState("chatOpen", !state.chatOpen)}
+        >
+          {copy().chat}
+        </ButtonV2>
         <ButtonV2
           data-action="whiteboard-export-file"
           variant="ghost-muted"
@@ -850,34 +951,53 @@ export default function WhiteboardDialog(props: {
           {state.error}
         </div>
       </Show>
-      <div class="relative min-h-0 flex-1 overflow-hidden">
-        <Show when={state.loading}>
-          <div class="absolute inset-0 z-10 flex items-center justify-center bg-v2-background-bg-base text-v2-text-text-muted">
-            {copy().loading}
-          </div>
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+        <div class="relative min-w-0 flex-1 overflow-hidden">
+          <Show when={state.loading}>
+            <div class="absolute inset-0 z-10 flex items-center justify-center bg-v2-background-bg-base text-v2-text-text-muted">
+              {copy().loading}
+            </div>
+          </Show>
+          <Show when={state.playtest}>
+            {(graph) => (
+              <WhiteboardPlaytestPanel
+                chinese={chinese()}
+                graph={graph()}
+                path={state.playtestPath}
+                disabled={state.exporting || state.importing}
+                onStart={(ref) => setState("playtestPath", [{ ref }])}
+                onAdvance={(connection) =>
+                  setState("playtestPath", advanceWhiteboardPlaytest(graph(), state.playtestPath, connection))
+                }
+                onBack={() => setState("playtestPath", state.playtestPath.slice(0, -1))}
+                onRestart={() =>
+                  setState("playtestPath", [
+                    { ref: state.playtestPath[0]?.ref ?? whiteboardPlaytestStarts(graph())[0] },
+                  ])
+                }
+                onSaveScenario={savePlaytestScenario}
+                onReview={reviewPlaytest}
+                onClose={() => setState({ playtest: undefined, playtestPath: [] })}
+              />
+            )}
+          </Show>
+          <div ref={host} class="size-full" />
+        </div>
+        <Show when={state.chatOpen}>
+          <WhiteboardChatPanel
+            chinese={chinese()}
+            messages={props.chatMessages ?? []}
+            working={!!props.chatWorking}
+            sending={state.chatSending}
+            applied={state.chatApplied}
+            autoApply={state.chatAutoApply}
+            disabledReason={props.onChatSend ? undefined : copy().chatUnavailable}
+            onAutoApplyChange={(value) => setState("chatAutoApply", value)}
+            onSend={sendChat}
+            onApply={applyChatProposal}
+            onClose={() => setState("chatOpen", false)}
+          />
         </Show>
-        <Show when={state.playtest}>
-          {(graph) => (
-            <WhiteboardPlaytestPanel
-              chinese={chinese()}
-              graph={graph()}
-              path={state.playtestPath}
-              disabled={state.exporting || state.importing}
-              onStart={(ref) => setState("playtestPath", [{ ref }])}
-              onAdvance={(connection) =>
-                setState("playtestPath", advanceWhiteboardPlaytest(graph(), state.playtestPath, connection))
-              }
-              onBack={() => setState("playtestPath", state.playtestPath.slice(0, -1))}
-              onRestart={() =>
-                setState("playtestPath", [{ ref: state.playtestPath[0]?.ref ?? whiteboardPlaytestStarts(graph())[0] }])
-              }
-              onSaveScenario={savePlaytestScenario}
-              onReview={reviewPlaytest}
-              onClose={() => setState({ playtest: undefined, playtestPath: [] })}
-            />
-          )}
-        </Show>
-        <div ref={host} class="size-full" />
       </div>
     </div>
   )

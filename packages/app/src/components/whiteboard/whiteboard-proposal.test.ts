@@ -41,7 +41,10 @@ describe("AI whiteboard proposal", () => {
         {
           a1: [{ type: "text", text: older }],
           u2: [{ type: "text", text: "Make it clearer" }],
-          a2: [{ type: "reasoning", text: "Working" }, { type: "text", text: newer }],
+          a2: [
+            { type: "reasoning", text: "Working" },
+            { type: "text", text: newer },
+          ],
         },
       ),
     ).toBe(newer)
@@ -63,10 +66,26 @@ describe("AI whiteboard proposal", () => {
       ),
     ).toBeUndefined()
     expect(
-      parseWhiteboardProposal(
-        JSON.stringify({ ...proposal, nodes: [{ ...proposal.nodes[0], column: 99 }] }),
-      ),
+      parseWhiteboardProposal(JSON.stringify({ ...proposal, nodes: [{ ...proposal.nodes[0], column: 99 }] })),
     ).toBeUndefined()
+  })
+
+  test("normalizes empty optional connection labels from model output", () => {
+    const value = parseWhiteboardProposal(
+      JSON.stringify({
+        format: "km-agent-whiteboard",
+        version: 1,
+        title: "Retry flow",
+        nodes: [
+          { id: "start", type: "start", label: "Start", column: 0, row: 0 },
+          { id: "end", type: "end", label: "End", column: 1, row: 0 },
+        ],
+        connections: [{ from: "start", to: "end", label: "" }],
+        notes: [],
+      }),
+    )
+
+    expect(value?.connections).toEqual([{ from: "start", to: "end", label: undefined }])
   })
 
   test("creates editable bound shapes, arrows, heading, and notes", () => {

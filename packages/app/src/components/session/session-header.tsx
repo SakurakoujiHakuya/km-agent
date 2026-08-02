@@ -20,13 +20,13 @@ import { usePlatform } from "@/context/platform"
 import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useServer } from "@/context/server"
+import { useServerSync } from "@/context/server-sync"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { focusTerminalById } from "@/pages/session/helpers"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { messageAgentColor } from "@/utils/agent"
-import { decode64 } from "@/utils/base64"
 import { fileManagerApp } from "@/utils/file-manager"
 import { Persist, persisted } from "@/utils/persist"
 import { StatusPopover, StatusPopoverV2 } from "../status-popover"
@@ -51,7 +51,14 @@ import {
 } from "../game-preview-build"
 import { mergePreviewProjectPrompt, previewProjectContext } from "../game-preview-project"
 import { loadPreviewProjectProfile } from "../game-preview-project-loader"
-import { appendPromptImageAttachment } from "../prompt-input/attachments"
+import { appendPromptImageAttachment, promptImageAttachment } from "../prompt-input/attachments"
+import { sendFollowupDraft } from "../prompt-input/submit"
+import {
+  whiteboardChatContext,
+  whiteboardChatPrompt,
+  whiteboardChatTranscript,
+  type WhiteboardChatSendInput,
+} from "../whiteboard/whiteboard-chat"
 import {
   seedWhiteboardPrompt,
   type WhiteboardHandoffIntent,
@@ -175,6 +182,7 @@ export function SessionHeader() {
   const local = useLocal()
   const command = useCommand()
   const server = useServer()
+  const serverSync = useServerSync()
   const platform = usePlatform()
   const prompt = usePrompt()
   const sdk = useSDK()
@@ -184,7 +192,7 @@ export function SessionHeader() {
   const terminal = useTerminal()
   const { params, view } = useSessionLayout()
 
-  const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
+  const projectDirectory = createMemo(() => sdk().directory)
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return undefined
@@ -204,6 +212,9 @@ export function SessionHeader() {
   const projectDesignDirectory = createMemo(() => whiteboardProjectDirectory(projectDirectory(), project()?.worktree))
   const whiteboardProposal = createMemo(() =>
     latestWhiteboardProposalText(params.id ? (sync().data.message[params.id] ?? []) : [], sync().data.part),
+  )
+  const whiteboardChatMessages = createMemo(() =>
+    whiteboardChatTranscript(params.id ? (sync().data.message[params.id] ?? []) : [], sync().data.part),
   )
   const os = createMemo(() => detectOS(platform))
   const isV2 = settings.general.newLayoutDesigns
@@ -333,6 +344,35 @@ export function SessionHeader() {
     }
     setWhiteboard("open", false)
     return true
+  }
+
+  const sendWhiteboardChat = async (input: WhiteboardChatSendInput) => {
+    const sessionID = params.id
+    const model = local.model.current()
+    const agent = sync().data.agent.find((item) => item.name === "plan") ?? local.agent.current()
+    if (!sessionID || !model || !agent) return false
+    const attachment = input.image && model.capabilities.input.image ? await promptImageAttachment(input.image) : undefined
+    const text = whiteboardChatPrompt(input.request, chinese())
+    const context = whiteboardChatContext(input.boardName, input.sceneContext, chinese())
+    return sendFollowupDraft({
+      api: sdk().api.session,
+      serverSync: serverSync(),
+      sync: sync(),
+      optimisticBusy: true,
+      draft: {
+        sessionID,
+        sessionDirectory: sdk().directory,
+        prompt: [{ type: "text", content: text, start: 0, end: text.length }, ...(attachment ? [attachment] : [])],
+        context: [],
+        agent: agent.name,
+        model: { providerID: model.provider.id, modelID: model.id },
+        variant: local.model.variant.current(),
+      },
+      syntheticText: context,
+    }).catch((error: unknown) => {
+      showRequestError(language, error)
+      return false
+    })
   }
 
   const [prefs, setPrefs] = persisted(Persist.global("open.app"), createStore({ app: "finder" as OpenApp }))
@@ -679,6 +719,9 @@ export function SessionHeader() {
           directory={projectDesignDirectory()}
           storageKey={`km-agent.whiteboard.v1:${projectDesignDirectory()}`}
           assistantText={whiteboardProposal()}
+          chatMessages={whiteboardChatMessages()}
+          chatWorking={params.id ? sync().data.session_working(params.id) : false}
+          onChatSend={sendWhiteboardChat}
           onAttach={attachWhiteboard}
           onClose={() => setWhiteboard("open", false)}
         />

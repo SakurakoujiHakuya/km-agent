@@ -21,15 +21,7 @@ export type WhiteboardProposal = {
   notes: string[]
 }
 
-const nodeTypes: WhiteboardProposalNodeType[] = [
-  "start",
-  "step",
-  "decision",
-  "mechanic",
-  "reward",
-  "failure",
-  "end",
-]
+const nodeTypes: WhiteboardProposalNodeType[] = ["start", "step", "decision", "mechanic", "reward", "failure", "end"]
 const idPattern = /^[a-zA-Z0-9_-]{1,48}$/
 const maxSourceLength = 100_000
 const maxNodes = 36
@@ -84,7 +76,8 @@ export function whiteboardProposalElements(proposal: WhiteboardProposal): Excali
     const palette = proposalPalette(node.type)
     return {
       id: shape.id,
-      type: node.type === "decision" ? "diamond" : node.type === "start" || node.type === "end" ? "ellipse" : "rectangle",
+      type:
+        node.type === "decision" ? "diamond" : node.type === "start" || node.type === "end" ? "ellipse" : "rectangle",
       x: shape.x,
       y: shape.y,
       width: shape.width,
@@ -201,8 +194,8 @@ function parseConnection(
 ): WhiteboardProposal["connections"][number] | undefined {
   if (!isRecord(value) || typeof value.from !== "string" || typeof value.to !== "string") return undefined
   if (!nodeIds.has(value.from) || !nodeIds.has(value.to) || value.from === value.to) return undefined
+  if (value.label !== undefined && typeof value.label !== "string") return undefined
   const label = value.label === undefined ? undefined : cleanText(value.label, 80)
-  if (value.label !== undefined && !label) return undefined
   return { from: value.from, to: value.to, label }
 }
 

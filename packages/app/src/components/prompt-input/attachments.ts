@@ -47,20 +47,25 @@ export async function appendPromptImageAttachment(
   target: PromptAttachmentTarget,
   options?: { cursor?: number; getPathForFile?: (file: File) => string },
 ) {
+  const attachment = await promptImageAttachment(file, options?.getPathForFile)
+  if (!attachment) return false
+  target.set([...target.current(), attachment], options?.cursor ?? target.cursor())
+  return true
+}
+
+export async function promptImageAttachment(file: File, getPathForFile?: (file: File) => string) {
   const mime = await attachmentMime(file)
-  if (!mime?.startsWith("image/")) return false
+  if (!mime?.startsWith("image/")) return undefined
   const url = await dataUrl(file, mime)
-  if (!url) return false
-  const attachment: ImageAttachmentPart = {
+  if (!url) return undefined
+  return {
     type: "image",
     id: uuid(),
     filename: file.name,
-    sourcePath: options?.getPathForFile?.(file) || undefined,
+    sourcePath: getPathForFile?.(file) || undefined,
     mime,
     dataUrl: url,
-  }
-  target.set([...target.current(), attachment], options?.cursor ?? target.cursor())
-  return true
+  } satisfies ImageAttachmentPart
 }
 
 export type PromptAttachmentsInput = {
@@ -78,7 +83,7 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
   const capture = (): AttachmentTarget | undefined => {
     const prompt = input.capture()
     const editor = input.editor()
-    if (!editor) return
+    if (!editor) return undefined
     return { prompt, cursor: prompt.cursor() ?? getCursorPosition(editor) }
   }
 

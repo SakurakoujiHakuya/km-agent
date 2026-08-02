@@ -47,6 +47,7 @@ type FollowupSendInput = {
   draft: FollowupDraft
   messageID?: string
   optimisticBusy?: boolean
+  syntheticText?: string
   before?: () => Promise<boolean> | boolean
 }
 
@@ -117,6 +118,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     messageID,
     sessionDirectory: input.draft.sessionDirectory,
   })
+  if (input.syntheticText?.trim()) {
+    requestParts.push({
+      id: Identifier.ascending("part"),
+      type: "text",
+      text: input.syntheticText,
+      synthetic: true,
+    })
+  }
 
   const message: Message = {
     id: messageID,
@@ -163,7 +172,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       model: input.draft.model,
       variant: input.draft.variant,
       legacyParts: requestParts,
-      text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+      text: requestParts.flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
         if (part.type !== "file") return []
         const text = part.source?.text
@@ -240,8 +249,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const errorMessage = (err: unknown) => {
     if (err && typeof err === "object" && "message" in err && typeof err.message === "string") return err.message
     if (err && typeof err === "object" && "data" in err) {
-      const data = (err as { data?: { message?: string } }).data
-      if (data?.message) return data.message
+      const data = Reflect.get(err, "data")
+      if (data && typeof data === "object" && "message" in data && typeof data.message === "string") {
+        return data.message
+      }
     }
     if (err instanceof Error) return err.message
     return language.t("common.requestFailed")

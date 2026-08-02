@@ -1,0 +1,72 @@
+import { describe, expect, test } from "bun:test"
+import {
+  WHITEBOARD_CHAT_CONTEXT_FILENAME,
+  WHITEBOARD_CHAT_CONTEXT_MARKER,
+  WHITEBOARD_CHAT_REQUEST_MAX_LENGTH,
+  whiteboardChatContext,
+  whiteboardChatDisplayText,
+  whiteboardChatPrompt,
+  whiteboardChatTranscript,
+} from "./whiteboard-chat"
+
+describe("whiteboard AI chat", () => {
+  test("builds a bounded, traceable edit prompt with the current scene", () => {
+    const prompt = whiteboardChatPrompt("增加一个失败分支", true)
+
+    expect(prompt).toBe("增加一个失败分支")
+    const context = whiteboardChatContext("机关房", "Structured board: start -> switch", true)
+    expect(context).toContain("机关房")
+    expect(context).toContain("Structured board: start -> switch")
+    expect(context).toContain("km-whiteboard")
+    expect(context).toContain("不要修改项目文件")
+    expect(context).toContain(WHITEBOARD_CHAT_CONTEXT_MARKER)
+    expect(whiteboardChatPrompt("x".repeat(WHITEBOARD_CHAT_REQUEST_MAX_LENGTH + 20), false)).not.toContain(
+      "x".repeat(WHITEBOARD_CHAT_REQUEST_MAX_LENGTH + 1),
+    )
+  })
+
+  test("extracts only persistent whiteboard turns and links the next assistant response", () => {
+    const prompt = whiteboardChatPrompt("Add a retry loop", false)
+    const proposal = `Done.\n\n\`\`\`km-whiteboard\n{"format":"km-agent-whiteboard","version":1,"title":"Retry","nodes":[{"id":"start","type":"start","label":"Start","column":0,"row":0},{"id":"retry","type":"failure","label":"Retry","column":1,"row":0}],"connections":[{"from":"start","to":"retry"}],"notes":[]}\n\`\`\``
+    const messages = [
+      { id: "unrelated-user", role: "user" },
+      { id: "unrelated-assistant", role: "assistant" },
+      { id: "chat-user", role: "user" },
+      { id: "chat-assistant", role: "assistant" },
+    ]
+    const parts = {
+      "unrelated-user": [{ type: "text", text: "Build the game" }],
+      "unrelated-assistant": [{ type: "text", text: "Okay" }],
+      "chat-user": [
+        { type: "text", text: prompt },
+        { type: "text", text: `${WHITEBOARD_CHAT_CONTEXT_MARKER}\nHidden structured context`, synthetic: true },
+      ],
+      "chat-assistant": [{ type: "text", text: proposal }],
+    }
+
+    const transcript = whiteboardChatTranscript(messages, parts)
+    expect(transcript).toHaveLength(2)
+    expect(transcript[0]).toMatchObject({ id: "chat-user", role: "user", text: "Add a retry loop" })
+    expect(transcript[1]).toMatchObject({ id: "chat-assistant", role: "assistant" })
+    expect(transcript[1]?.proposal?.title).toBe("Retry")
+    expect(whiteboardChatDisplayText(transcript[1], false)).toBe("Done.")
+  })
+
+  test("does not attach an unrelated assistant response to an abandoned whiteboard turn", () => {
+    const messages = [
+      { id: "chat-user", role: "user" },
+      { id: "regular-user", role: "user" },
+      { id: "regular-assistant", role: "assistant" },
+    ]
+    const parts = {
+      "chat-user": [
+        { type: "text", text: whiteboardChatPrompt("First", false) },
+        { type: "file", filename: WHITEBOARD_CHAT_CONTEXT_FILENAME },
+      ],
+      "regular-user": [{ type: "text", text: "Second" }],
+      "regular-assistant": [{ type: "text", text: "Response" }],
+    }
+
+    expect(whiteboardChatTranscript(messages, parts)).toEqual([{ id: "chat-user", role: "user", text: "First" }])
+  })
+})
