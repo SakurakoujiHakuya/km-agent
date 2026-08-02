@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
@@ -48,17 +48,8 @@ import { spawnWslSidecar } from "./wsl/sidecar"
 import { migrate } from "./migrate"
 import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
+import { compatibleUserDataID, LEGACY_APP_IDS, PRODUCT_APP_IDS, PRODUCT_NAMES, PRODUCT_PROTOCOLS } from "./brand"
 
-const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
-}
-const APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
-}
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -121,7 +112,13 @@ const main = Effect.gen(function* () {
 
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
-  const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  const channel = app.isPackaged ? CHANNEL : "dev"
+  const appId = PRODUCT_APP_IDS[channel]
+  const appData = app.getPath("appData")
+  const userDataID = compatibleUserDataID(
+    channel,
+    new Set([appId, LEGACY_APP_IDS[channel]].filter((id) => existsSync(join(appData, id)))),
+  )
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 
@@ -137,12 +134,9 @@ const main = Effect.gen(function* () {
     process.env.XDG_STATE_HOME = join(root, "state")
     return root
   })()
-  app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+  app.setName(PRODUCT_NAMES[channel])
   app.setAppUserModelId(appId)
-  app.setPath(
-    "userData",
-    onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
-  )
+  app.setPath("userData", onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(appData, userDataID))
   if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
   initializeOldLayoutEligibility(app.getPath("userData"))
   logger = initLogging()
@@ -202,7 +196,7 @@ const main = Effect.gen(function* () {
   const shellEnv = preferAppEnv(app.getPath("userData"))
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
+    const urls = argv.filter((arg: string) => PRODUCT_PROTOCOLS.some((scheme) => arg.startsWith(`${scheme}://`)))
     if (urls.length) {
       logger.log("deep link received via second-instance", { urls })
       emitDeepLinks(urls)
@@ -267,7 +261,7 @@ const main = Effect.gen(function* () {
       }),
     ),
   )
-  app.setAsDefaultProtocolClient("opencode")
+  PRODUCT_PROTOCOLS.forEach((scheme) => app.setAsDefaultProtocolClient(scheme))
   registerRendererProtocol()
   setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)

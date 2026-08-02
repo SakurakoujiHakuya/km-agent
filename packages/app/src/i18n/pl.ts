@@ -686,7 +686,7 @@ export const dict = {
   "sidebar.project.clearNotifications": "Wyczyść powiadomienia",
   "sidebar.empty.title": "Brak otwartych projektów",
   "sidebar.empty.description": "Otwórz projekt, aby rozpocząć",
-  "app.name.desktop": "OpenCode Desktop",
+  "app.name.desktop": "KM Agent",
   "settings.section.desktop": "Pulpit",
   "settings.section.server": "Serwer",
   "settings.tab.general": "Ogólne",

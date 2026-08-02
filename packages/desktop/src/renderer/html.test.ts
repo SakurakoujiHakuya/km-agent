@@ -38,6 +38,13 @@ describe("electron renderer html", () => {
         const content = await html(name)
         expect(content).not.toContain('rel="manifest"')
       })
+
+      test("uses the KM Agent title and local product icons", async () => {
+        const content = await html(name)
+        expect(content).toContain("<title>KM Agent</title>")
+        expect(content).toContain("./km-agent-icon.svg")
+        expect(content).not.toContain("favicon-v3")
+      })
     })
   }
 })
@@ -58,5 +65,6 @@ describe("electron vite publicDir", () => {
     const resolved = resolve(root, rendererRoot![1], pub![1])
     expect(existsSync(resolved)).toBe(true)
     expect(existsSync(join(resolved, "oc-theme-preload.js"))).toBe(true)
+    expect(existsSync(join(resolved, "km-agent-icon.svg"))).toBe(true)
   })
 })

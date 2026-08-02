@@ -1,4 +1,25 @@
 <p align="center">
+  <img src="packages/app/public/km-agent-icon.svg" width="112" height="112" alt="KM Agent logo">
+</p>
+
+<h1 align="center">KM Agent</h1>
+
+<p align="center">面向游戏设计与研发团队的 AI 白板、编码智能体和可玩原型工作台。</p>
+
+## Local desktop development
+
+This fork keeps the upstream OpenCode runtime and provider ecosystem while building a Codex-style KM Agent desktop experience. The current product roadmap is tracked in [docs/km-agent-roadmap.md](docs/km-agent-roadmap.md).
+
+```bash
+bun install
+bun run dev:desktop
+```
+
+The desktop process starts its bundled local agent server automatically. Use `bun run dev:web` when only the browser renderer is needed.
+
+## Upstream OpenCode
+
+<p align="center">
   <a href="https://opencode.ai">
     <picture>
       <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">

@@ -27,7 +27,6 @@ import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./
 import { windowFullscreen } from "./window-fullscreen"
 import { availableStartupServer, readyWslConnections } from "./wsl/connections"
 import "./styles.css"
-import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 
 const root = document.getElementById("root")
@@ -250,7 +249,7 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
 
       const notification = new Notification(title, {
         body: description ?? "",
-        icon: "https://opencode.ai/favicon-96x96-v3.png",
+        icon: "./km-agent-icon-96.png",
       })
       notification.onclick = () => {
         void window.api.showWindow()
@@ -328,7 +327,7 @@ listenForDeepLinks()
 function LoadingSplash() {
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-      <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+      <img src="./km-agent-icon.svg" alt="KM Agent" class="w-16 h-16 opacity-70 animate-pulse" draggable={false} />
     </div>
   )
 }

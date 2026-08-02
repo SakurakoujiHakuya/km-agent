@@ -2,12 +2,12 @@
   "name": "@opencode-ai/desktop",
   "private": true,
   "version": "1.18.11",
+  "productName": "KM Agent",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://opencode.ai",
+  "homepage": "https://github.com/SakurakoujiHakuya/km-agent",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "SakurakoujiHakuya"
   },
   "scripts": {
     "typecheck": "tsgo -b",

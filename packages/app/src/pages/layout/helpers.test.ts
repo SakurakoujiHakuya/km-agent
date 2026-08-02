@@ -38,6 +38,7 @@ const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
+    expect(parseDeepLink("km-agent://open-project?directory=/tmp/demo")).toBe("/tmp/demo")
     expect(parseDeepLink("opencode://open-project?directory=/tmp/demo")).toBe("/tmp/demo")
   })
 
@@ -77,6 +78,10 @@ describe("layout deep links", () => {
   })
 
   test("parses new-session deep links with optional prompt", () => {
+    expect(parseNewSessionDeepLink("km-agent://new-session?directory=/tmp/demo&prompt=build%20a%20prototype")).toEqual({
+      directory: "/tmp/demo",
+      prompt: "build a prototype",
+    })
     expect(parseNewSessionDeepLink("opencode://new-session?directory=/tmp/demo")).toEqual({ directory: "/tmp/demo" })
     expect(parseNewSessionDeepLink("opencode://new-session?directory=/tmp/demo&prompt=hello%20world")).toEqual({
       directory: "/tmp/demo",

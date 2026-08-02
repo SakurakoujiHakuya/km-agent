@@ -1,8 +1,10 @@
-# Tauri Icons
+# KM Agent desktop icons
+
+The shared vector source is `km-agent-icon.svg`. The `dev`, `beta`, and `prod` folders contain the generated Electron assets for macOS, Windows, and Linux.
 
 Here's the process I've been using to create icons:
 
-- Save source image as `app-icon.png` in `packages/desktop`
+- Rasterize `km-agent-icon.svg` at 1024 × 1024 when refreshing the source image
 - `cd` to `packages/desktop`
 - Run `bun tauri icon -o src-tauri/icons/{environment}`
 - Use [Image2Icon](https://img2icnsapp.com/)'s 'Big Sur Icon' preset to generate an `icon.icns` file and place it in the appropriate icons folder

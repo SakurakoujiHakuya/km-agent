@@ -14,6 +14,7 @@ This repository tracks the OpenCode `dev` branch and uses its existing agent run
 - OpenCode source imported from `anomalyco/opencode`.
 - Dedicated `gui-first-pass` development branch.
 - Upstream desktop, server, SDK, session, provider, and terminal features retained.
+- KM Agent now has its own application name, app IDs, `km-agent://` deep links, repository-backed update channels, installer names, Linux metadata, menus, loading states, and cross-platform icon set. Existing OpenCode desktop data and `opencode://` links remain compatible, so the product identity change does not strand current workspaces.
 - Home empty state upgraded into a centered launchpad.
 - Launchpad connects to the real project picker when no repository is open and to the real new-session flow once a project exists.
 - Embedded Excalidraw whiteboard for sketching level flow, puzzle logic, mechanics, and interaction diagrams.
@@ -52,13 +53,12 @@ This repository tracks the OpenCode `dev` branch and uses its existing agent run
 
 ## Next milestones
 
-1. Product identity: app name, icons, update channel, signing identifiers, and about screen.
-2. Game design workbench: reusable templates for level flow, puzzle dependency graphs, combat loops, and narrative beats.
-3. Codex-style task navigation: add status counts, sorting, archive management, and cross-project attention views.
-4. Composer polish: mode switch, model selector, attachments, approval policy, and workspace selector in one consistent footer.
-5. Activity presentation: compact tool calls, patch summaries, terminal output, approvals, and progress indicators.
-6. Playable preview loop: support engine-based demos and hosted report sharing.
-7. Distribution: macOS development package first, followed by Windows and Linux builds.
+1. Game design workbench: reusable templates for level flow, puzzle dependency graphs, combat loops, and narrative beats.
+2. Codex-style task navigation: add status counts, sorting, archive management, and cross-project attention views.
+3. Composer polish: mode switch, model selector, attachments, approval policy, and workspace selector in one consistent footer.
+4. Activity presentation: compact tool calls, patch summaries, terminal output, approvals, and progress indicators.
+5. Playable preview loop: support engine-based demos and hosted report sharing.
+6. Distribution: macOS development package first, followed by Windows and Linux builds.
 
 ## Local development
 
